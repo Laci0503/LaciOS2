@@ -1,4 +1,13 @@
 #!/bin/bash
+
+mkdir -p build
+mkdir -p efifilesystem
+mkdir -p image
+mkdir -p build/iso
+mkdir -p efifilesystem/EFI
+mkdir -p efifilesystem/EFI/BOOT
+mkdir -p efifilesystem/lacios
+
 sh boot/buildefi.sh
 sh efikernel/buildefikernel.sh
 
@@ -34,7 +43,7 @@ done
 
 dd if=image/fat.img of=image/LaciOS.img bs=512 count=245760 seek=2048 conv=notrunc
 
-if [ -z "$1"]; then
+if [ -z "$1" ]; then
 echo ""
 else
     cp image/fat.img build/iso/BOOTX64.img

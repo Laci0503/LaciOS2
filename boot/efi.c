@@ -4,7 +4,7 @@
 #include <types.h>
 #include "gdt.h" //From https://blog.llandsmeer.com/tech/2019/07/21/uefi-x64-userland.html
 #define KEYBOARD_PORT 0x60
-#define SERIAL_PORT 0x3F8
+#define SERIAL_PORT 0x3F8 
 
 /* bitflags */
 #define PAGE_BIT_P_PRESENT (1<<0)
