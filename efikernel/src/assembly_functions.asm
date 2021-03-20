@@ -449,7 +449,49 @@ interrupts.intHandler:
     add rax, 8 ; restore r15
     mov r15, [rax]
 
+    mov rax, cpu_cs ; check if return is to cpl0
+    mov rax, [rax]
+    cmp rax, 0x8
+    jne iretq_cpl3
+    
+    ; return to cpl0
+    mov rax, cpu_rax ; restore rax
+    mov rax, [rax]
 
+    iretq
+
+iretq_cpl3: ;return to cpl3
+    ;pop rax
+    ;push rcx
+    ;mov rcx, rax ; save rax
+    ;mov rax, cpl3_rax
+    ;mov [rax], rcx
+    ;pop rcx
+    mov rax, cpu_rax ; restore rax from current_state
+    push qword [rax]
+
+    mov rax, cpl3_rax ; save rax to cpl_rax
+    pop qword [rax]
+
+    mov rax, cpl3_rcx ; save rcx
+    mov [rax], rcx
+
+    add rax, 8 ; save r11
+    mov [rax], r11
+
+    add rax, 8 ; pop and save rip
+    pop qword [rax]
+
+    add rsp, 8 ; dispose cs
+
+    pop r11 ; rflags into r11 for sysret; save it for cpl3 code
+    
+    pop rsp ; restore rsp
+
+    mov rcx, cpl3_returner ; go to cpl3_returner
+    ;jmp $
+
+    o64 sysret
 
 global while1
 while1:
@@ -489,6 +531,9 @@ load_gdt:
     mov ax, 0x40    ; TSS segment is 0x40
     ltr ax          ; load TSS
     ret
+
+
+
 
 
 
