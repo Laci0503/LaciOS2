@@ -241,7 +241,7 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) //Mostly from o
             EFI_FILE_HANDLE logofile;
             EFI_STATUS status = uefi_call_wrapper(Volume->Open, 5, Volume, &logofile, FileName, EFI_FILE_MODE_READ, EFI_FILE_READ_ONLY);
             if(status!=EFI_SUCCESS){
-                Print(L"Error");
+                Print(L"Error, couldnt open logo file");
                 while(1);
             }
             uint64 logofilesize=FileSize(logofile);
@@ -254,7 +254,7 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) //Mostly from o
             EFI_FILE_HANDLE kernelfile;
             status = uefi_call_wrapper(Volume->Open, 5, Volume, &kernelfile, FileName, EFI_FILE_MODE_READ, EFI_FILE_READ_ONLY);
             if(status!=EFI_SUCCESS){
-                Print(L"Error");
+                Print(L"Error, couldn't open kernel.bin");
                 while(1);
             }
             uint64 kernelfilesize=FileSize(kernelfile);
@@ -317,7 +317,7 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) //Mostly from o
                 //EFI_MEMORY_DESCRIPTOR* last_descriptor = ((EFI_MEMORY_DESCRIPTOR*)buffer+(DescriptorCount-1)*MemMapDescriptorSize);
                 //FreePool(buffer);
             }else{
-                Print(L"Error");
+                Print(L"Error, buffer size is zero.");
                 while(1);
             }
 

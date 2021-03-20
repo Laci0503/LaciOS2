@@ -26,7 +26,7 @@
 
         push rax
         mov rax, interruptNumber
-        mov qword [rax], %1
+        mov word [rax], %1
         pop rax
         jmp interrupts.intHandler
 %endmacro
@@ -289,7 +289,7 @@ interruptMacro 254
 interruptMacro 255
 
 interruptNumber:
-    dq 0
+    dw 0
 ;esp_backup:
 ;    dq 0
 ;esp_backup2:
@@ -328,190 +328,128 @@ current_state:
     cpu_ss:     dq 0
 
 extern handleInterrupt
-rbx_backup:
-    dq 0
+
 interrupts.intHandler:
-    cli
-    push rax
-    ;mov ax, 0x10
-    ;mov ss, ax
-    mov rax, rbx_backup
+    cli ;disable interrupts
+    push rax ; save rax to stack
+
+    mov rax, cpu_rbx ; save rbx to cpu_rbx
     mov qword [rax], rbx
-    mov rax, interruptNumber
-    mov qword rbx, [rax]
-    pop rax
-;
-    cmp qword rbx, 8
+
+    mov rax, cpu_rax ; save rax to cpu_rax
+    pop rbx ; pop rax into rbx
+    mov [rax], rbx
+
+    mov rax, interruptNumber ; move the interrupt number into bx
+    mov word bx, [rax]
+
+    cmp word bx, 8 ;check if exception pushes error code
     je continue
-    cmp qword rbx, 10
+    cmp word bx, 17
     je continue
-    cmp qword rbx, 11
+    cmp word bx, 30
     je continue
-    cmp qword rbx, 12
-    je continue
-    cmp qword rbx, 13
-    je continue
-    cmp qword rbx, 14
-    je continue
-    cmp qword rbx, 17
-    je continue
-    cmp qword rbx, 30
-    je continue
+
+    cmp word bx, 10
+    jb push_null
+    cmp word bx, 14
+    jbe continue
+    ; if not, push a zero
+    push_null:
     mov rbx, 0
     push rbx
+
     continue:
 
-    push rbx
-    mov rbx, rax
-    mov rax, cpu_rax
-    mov [rax], rbx
-    pop rbx
-
-    add rax, 8
-    mov [rax], rbx
-    add rax, 8
+    mov rax, cpu_rcx ; save rcx
     mov [rax], rcx
-    add rax, 8
-    mov [rax], rdx
-    add rax, 8
+    add rax, 8 ; save rdx
+    mov [rax], rdx 
+    add rax, 8 ; save rsi
     mov [rax], rsi
-    add rax, 8
+    add rax, 8 ; save rdi
     mov [rax], rdi
-    add rax, 8
+    add rax, 8 ; save rbp
     mov [rax], rbp
-    add rax, 8
+    add rax, 8 ; save r8
     mov [rax], r8
-    add rax, 8
+    add rax, 8 ; save r9
     mov [rax], r9
-    add rax, 8
+    add rax, 8 ; save r10
     mov [rax], r10
-    add rax, 8
-    mov [rax], r11
-    add rax, 8
-    mov [rax], r12
-    add rax, 8
-    mov [rax], r13
-    add rax, 8
-    mov [rax], r14
-    add rax, 8
-    mov [rax], r15
-    add rax, 344
-    
-    pop rbx
-    mov [rax], rbx
-    add rax, 8
-    pop rbx
-    mov [rax], rbx
-    add rax, 8
-    pop rbx
-    mov [rax], rbx
-    add rax, 8
-    pop rbx
-    mov [rax], rbx
-    add rax, 8
-    pop rbx
-    mov [rax], rbx
-    add rax, 8
-    pop rbx
-    mov [rax], rbx
-
-    mov rax, interruptNumber
-    mov rdi, [rax]
-    mov rax, handleInterrupt
-    call rax
-
-    mov rax, cpu_ss
-    mov rbx, [rax]
-    push rbx
-    sub rax, 8
-    mov rbx, [rax]
-    push rbx
-    sub rax, 8
-    mov rbx, [rax]
-    push rbx
-    sub rax, 8
-    mov rbx, [rax]
-    push rbx
-    sub rax, 8
-    mov rbx, [rax]
-    push rbx
-    
-    mov rax, cpu_rbx
-    mov rbx, [rax]
-    add rax, 8
-    mov rcx, [rax]
-    add rax, 8
-    mov rdx, [rax]
-    add rax, 8
-    mov rsi, [rax]
-    add rax, 8
-    mov rdi, [rax]
-    add rax, 8
-    mov r8,  [rax]
-    add rax, 8
-    mov r9,  [rax]
-    add rax, 8
-    mov r10, [rax]
-    add rax, 8
-    mov r11, [rax]
-    add rax, 8
-    mov r12, [rax]
-    add rax, 8
-    mov r13, [rax]
-    add rax, 8
-    mov r14, [rax]
-    add rax, 8
-    mov r15, [rax]
-
-    push rbx
-    mov rax, cpu_rax
-    mov rbx, [rax]
-    mov rax, rbx
-    pop rbx
-
-    push rax
-    mov rax, cpu_cs
-    mov rax, [rax]
-    cmp rax, 0x8
-
-    jne iretq_cpl3
-    pop rax
-    iretq
-
-return:
-    ;jmp $
-    ;iretq
-iretq_cpl3:
-    pop rax
-    push rcx
-    mov rcx, rax ; save rax
-    mov rax, cpl3_rax
-    mov [rax], rcx
-    pop rcx
-
-    add rax, 8 ; save rcx
-    mov [rax], rcx
-
     add rax, 8 ; save r11
     mov [rax], r11
-
-    add rax, 8 ; pop and save rip
-    pop rcx
-    mov [rax], rcx
-
-    add rsp, 8 ; dispose cs
-
-    pop r11 ; rflags into r11 for sysret; save it for cpl3 code
-    add rax, 8
-    mov [rax], r11
+    add rax, 8 ; save r12
+    mov [rax], r12
+    add rax, 8 ; save r13
+    mov [rax], r13
+    add rax, 8 ; save r14
+    mov [rax], r14
+    add rax, 8 ; save r15
+    mov [rax], r15
+    add rax, 344 ; skip the reserved spaces
     
-    pop rax ; rsp
-    mov rsp, rax ; rsp
+    pop qword [rax] ; save error code
+    add rax, 8 
+    pop qword [rax] ; save rip
+    add rax, 8
+    pop qword [rax] ; save cs
+    add rax, 8
+    pop qword [rax] ; save rflags
+    add rax, 8
+    pop qword [rax] ; save rsp
+    add rax, 8
+    pop qword [rax] ; save ss
 
-    mov rcx, cpl3_returner ; go to cpl3_returner
-    ;jmp $
+    mov rax, interruptNumber ; pass interruptNumber as argument in rdi
+    mov di, word [rax]
 
-    o64 sysret
+    mov rax, handleInterrupt ; call handleInterrupt
+    call rax
+
+    mov rax, cpu_ss ; push ss to stack
+    push qword [rax]
+    
+    sub rax, 8 ; push rsp to stack
+    push qword [rax]
+
+    sub rax, 8 ; push rflags to stack
+    push qword [rax]
+
+    sub rax, 8 ; push cs to stack
+    push qword [rax]
+
+    sub rax, 8 ; push rip to stack
+    push qword [rax]
+    
+    mov rax, cpu_rbx ; restore rbx
+    mov rbx, [rax]
+    add rax, 8 ; restore rcx
+    mov rcx, [rax]
+    add rax, 8 ; restore rdx
+    mov rdx, [rax]
+    add rax, 8 ; restore rsi
+    mov rsi, [rax]
+    add rax, 8 ; restore rdi
+    mov rdi, [rax]
+    add rax, 8 ; restore r8
+    mov r8,  [rax]
+    add rax, 8 ; restore r9
+    mov r9,  [rax]
+    add rax, 8 ; restore r10
+    mov r10, [rax]
+    add rax, 8 ; restore r11
+    mov r11, [rax]
+    add rax, 8 ; restore r12
+    mov r12, [rax]
+    add rax, 8 ; restore r13
+    mov r13, [rax]
+    add rax, 8 ; restore r14
+    mov r14, [rax]
+    add rax, 8 ; restore r15
+    mov r15, [rax]
+
+
 
 global while1
 while1:
@@ -554,9 +492,6 @@ load_gdt:
 
 
 
-
-
-
 ;cpl3
 align(4096)
 global cpl3_kernel_part
@@ -568,7 +503,6 @@ cpl3_reg_save:
     cpl3_rcx: dq 0
     cpl3_r11: dq 0
     cpl3_rip: dq 0
-    cpl3_rflags: dq 0
 cpl3_returner:
     mov rax, cpl3_r11 ; restore r11
     mov r11, [rax]
@@ -577,15 +511,9 @@ cpl3_returner:
     mov rcx, [rax]
 
     mov rax, cpl3_rip ; push rip on the stack for the return
-    mov rax, [rax]
-    push rax
-
-    mov rax, cpl3_rflags ; push rflags onto the stack
-    mov rax, [rax]
-    push rax
+    push qword [rax]
 
     mov rax, cpl3_rax ; restore rax
     mov rax, [rax]
 
-    popf ; pop the flags from the stack
     ret

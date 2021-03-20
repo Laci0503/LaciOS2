@@ -102,7 +102,9 @@ void set_task_exists(uint64 idx, uint8 exists){
 }
 
 uint8 schedule(uint64* current_pml4){
+    //print_to_serial("scheduling\n\r");
     task_switch_timer--;
+    *current_pml4=(uint64)tasks[current_task].pml4;
     if(task_switch_timer>0)return 0;
     task_switch_timer=1;
     uint64 i=0;
@@ -114,11 +116,11 @@ uint8 schedule(uint64* current_pml4){
             i++;
             i%=MAX_TASK_NUM;
         }
-        /*print_to_serial("Switchting to task #");
-        print_int_to_serial(i);
-        print_to_serial("\n\r");*/
         tasks[current_task].cpu_state=current_state;
     }
+    /*print_to_serial("Switchting to task #");
+    print_int_to_serial(i);
+    print_to_serial("\n\r");*/
     current_state=tasks[i].cpu_state;
     *current_pml4=(uint64)(tasks[i].pml4);
     task_switch_timer=tasks[i].priority*cycle_per_task;

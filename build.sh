@@ -12,9 +12,11 @@ sh boot/buildefi.sh
 sh efikernel/buildefikernel.sh
 
 rm image/LaciOS.img image/fat.img
+rm efifilesystem/rawlogo.bin
 
 rm efifilesystem/EFI/BOOT/BOOTX64.EFI || echo ""
 cp build/BOOTX64.EFI efifilesystem/EFI/BOOT/BOOTX64.EFI
+cp rawlogo.bin efifilesystem/rawlogo.bin
 
 dirs=$(find efifilesystem/ ! -path efifilesystem/ -type d | awk -F/ '{ for(i=2; i<=NF; i++) {printf("/%s", $i)}print ""}')
 files=$(find efifilesystem/  -type f | awk -F/ '{ for(i=2; i<=NF; i++) {printf("/%s", $i)}print ""}')

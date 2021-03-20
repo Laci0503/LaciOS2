@@ -56,16 +56,28 @@ void handleInterrupt(uint64 interruptnumber){
     if(interruptnumber==HardwareInterruptOffset+0){
         if(task_scheduler_running){
             uint64 current_pml4;
-            asm("mov %%cr3, %%rax" : "=a"(current_pml4) : );
+            //asm("mov %%cr3, %%rbx" : "=b"(current_pml4) : );
+            /*print_to_serial("starting pml4: ");
+            print_hex_to_serial(current_pml4);
+            print_to_serial("\n\r");*/
             asm("mov %%rax, %%cr3" : : "a"(kernel_pml4));
             //if(current_pml4!=kernel_pml4)
+            /*print_to_serial("before schedule pml4: ");
+            print_hex_to_serial(current_pml4);
+            print_to_serial("\n\r");*/
             schedule(&current_pml4);
+            /*print_to_serial("after schedule pml4: ");
+            print_hex_to_serial(current_pml4);
+            print_to_serial("\n\r");
             print_to_serial("RIP: ");
             print_hex_to_serial(current_state.rip);
             print_to_serial("\n\r");
-            //while1();
+            //while1()
+            print_to_serial("pml4: ");
+            print_hex_to_serial(current_pml4);
+            print_to_serial(" ");*/
             asm("mov %%rax, %%cr3" : : "a"(current_pml4));
-            
+            //print_to_serial("LOADED\n\r");
             //while1();
         }
     }
