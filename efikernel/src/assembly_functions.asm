@@ -26,10 +26,10 @@
 
         push rax ; save rax
 
-        ;mov rax, cpl3_interrupt_finished ; check if last interrupt finished
-        ;cmp byte [rax], 1
-        ;je continue_to_handler_%1
-        ;iretq ; if not return
+        mov rax, cpl3_interrupt_finished ; check if last interrupt finished
+        cmp byte [rax], 1
+        je continue_to_handler_%1
+        iretq ; if not return
 
         continue_to_handler_%1: ; if finished handle the interrupt
         mov rax, interruptNumber ; store the interruptnumber
@@ -470,8 +470,8 @@ interrupts.intHandler:
     iretq
 
 iretq_cpl3: ;return to cpl3
-    ;mov rax, cpl3_interrupt_finished ; clear the interrupt finished flag
-    ;mov byte [rax], 0
+    mov rax, cpl3_interrupt_finished ; clear the interrupt finished flag
+    mov byte [rax], 0
 
     mov rax, cpu_rax ; restore rax from current_state
     push qword [rax]
@@ -569,10 +569,9 @@ cpl3_returner:
     mov rax, cpl3_rax ; restore rax
     mov rax, [rax]
 
-    ;push rax ; save rax to stack to minimize the time window for an interrupt to come while handling one
-    ;mov rax, cpl3_interrupt_finished
-    ;mov byte [rax], 1
-
-    ;pop rax
+    push rax ; save rax to stack to minimize the time window for an interrupt to come while handling one
+    mov rax, cpl3_interrupt_finished
+    mov byte [rax], 1
+    pop rax
 
     ret

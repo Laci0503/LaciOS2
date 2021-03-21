@@ -9,7 +9,6 @@
 #include <task_scheduler.h>
 
 void usercode();
-void usercode2();
 uint8 user_stack[2048];
 uint8 test[2048];
 uint8* kernel_stack;
@@ -193,9 +192,6 @@ void kernel_main(kernel_info* kernel_info){
     print_hex_to_serial((uint64)(&current_state));
     print_to_serial("\n\r");
 
-    idx=add_task(usercode2,4096,0);
-    tasks[idx].state=RUNNING;
-
     start_task_scheduler();
 
     while(1);
@@ -207,15 +203,6 @@ void usercode(){
         if(letter>'Z')letter='A';
         asm volatile("outb %0, %1" : : "a" (letter), "Nd" (SERIAL_PORT));
         letter++;
-        for(uint64 i=0;i<50000*5000;i++)asm("NOP");
-    }
-}
-void usercode2(){
-    char letter='Z';
-    while(1){
-        if(letter<'A')letter='Z';
-        asm volatile("outb %0, %1" : : "a" (letter), "Nd" (SERIAL_PORT));
-        letter--;
         for(uint64 i=0;i<50000*5000;i++)asm("NOP");
     }
 }

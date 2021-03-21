@@ -67,7 +67,7 @@ int64 add_task(void* location, uint64 size, uint64 entry_point) { //returns the 
     tasks[i].cpu_state.cs=0x2b;
     tasks[i].cpu_state.ss=0x23;
     tasks[i].cpu_state.error_code=0;
-    tasks[i].cpu_state.rsp=page_count*4096-20;
+    tasks[i].cpu_state.rsp=(page_count*4096)&(~0b111);
     tasks[i].cpu_state.rbp=tasks[i].cpu_state.rsp;
     tasks[i].cpu_state.rip=entry_point;
     tasks[i].cpu_state.rflags=0x202;
