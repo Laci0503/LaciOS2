@@ -9,6 +9,7 @@
 #include <task_scheduler.h>
 
 void usercode();
+void usercode2();
 uint8 user_stack[2048];
 uint8 test[2048];
 uint8* kernel_stack;
@@ -191,29 +192,30 @@ void kernel_main(kernel_info* kernel_info){
     print_to_serial("&current_state: ");
     print_hex_to_serial((uint64)(&current_state));
     print_to_serial("\n\r");
+
+    idx=add_task(usercode2,4096,0);
+    tasks[idx].state=RUNNING;
+
     start_task_scheduler();
 
     while(1);
 }
+
 void usercode(){
-    /*print_to_serial("\n\rInthandler address: ");
-    print_hex_to_serial(((uint64)(IDT[0x20].offset_1)) | (((uint64)IDT[0x20].offset_2)<<16) | (((uint64)IDT[0x20].offset_3)<<32));*/
-    /*print_hex_to_serial(IDT[0x21].offset_1);
-    print_to_serial("\n\rOffset_2: ");
-    print_hex_to_serial(IDT[0x21].offset_2);
-    print_to_serial("\n\rOffset_3: ");
-    print_hex_to_serial(IDT[0x21].offset_3);*/
-    //while(1);
     char letter='A';
     while(1){
         if(letter>'Z')letter='A';
-        outb(SERIAL_PORT,letter);
+        asm volatile("outb %0, %1" : : "a" (letter), "Nd" (SERIAL_PORT));
         letter++;
-        /*for(uint32 i=0;i<5000;i++){
-            for(uint32 j=0;j<50000;j++){
-                asm("NOP");
-            }
-        }*/
+        for(uint64 i=0;i<50000*5000;i++)asm("NOP");
     }
-
+}
+void usercode2(){
+    char letter='Z';
+    while(1){
+        if(letter<'A')letter='Z';
+        asm volatile("outb %0, %1" : : "a" (letter), "Nd" (SERIAL_PORT));
+        letter--;
+        for(uint64 i=0;i<50000*5000;i++)asm("NOP");
+    }
 }

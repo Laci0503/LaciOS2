@@ -24,11 +24,19 @@
         ;pop rdx
         ;pop rax
 
-        push rax
-        mov rax, interruptNumber
+        push rax ; save rax
+
+        ;mov rax, cpl3_interrupt_finished ; check if last interrupt finished
+        ;cmp byte [rax], 1
+        ;je continue_to_handler_%1
+        ;iretq ; if not return
+
+        continue_to_handler_%1: ; if finished handle the interrupt
+        mov rax, interruptNumber ; store the interruptnumber
         mov word [rax], %1
-        pop rax
-        jmp interrupts.intHandler
+
+        pop rax ; restore rax
+        jmp interrupts.intHandler ; jump to the interrupthandler
 %endmacro
 ;
 interruptMacro 0
@@ -330,7 +338,7 @@ current_state:
 extern handleInterrupt
 
 interrupts.intHandler:
-    cli ;disable interrupts
+    cli ; disable interrupts
     push rax ; save rax to stack
 
     mov rax, cpu_rbx ; save rbx to cpu_rbx
@@ -458,15 +466,13 @@ interrupts.intHandler:
     mov rax, cpu_rax ; restore rax
     mov rax, [rax]
 
+    ;jmp $
     iretq
 
 iretq_cpl3: ;return to cpl3
-    ;pop rax
-    ;push rcx
-    ;mov rcx, rax ; save rax
-    ;mov rax, cpl3_rax
-    ;mov [rax], rcx
-    ;pop rcx
+    ;mov rax, cpl3_interrupt_finished ; clear the interrupt finished flag
+    ;mov byte [rax], 0
+
     mov rax, cpu_rax ; restore rax from current_state
     push qword [rax]
 
@@ -543,6 +549,8 @@ global cpl3_kernel_part
 global cpl3_reg_save
 global cpl3_returner
 cpl3_kernel_part:
+cpl3_interrupt_finished:
+    db 1
 cpl3_reg_save:
     cpl3_rax: dq 0
     cpl3_rcx: dq 0
@@ -560,5 +568,11 @@ cpl3_returner:
 
     mov rax, cpl3_rax ; restore rax
     mov rax, [rax]
+
+    ;push rax ; save rax to stack to minimize the time window for an interrupt to come while handling one
+    ;mov rax, cpl3_interrupt_finished
+    ;mov byte [rax], 1
+
+    ;pop rax
 
     ret

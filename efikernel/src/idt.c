@@ -76,6 +76,7 @@ void handleInterrupt(uint64 interruptnumber){
             print_to_serial("pml4: ");
             print_hex_to_serial(current_pml4);
             print_to_serial(" ");*/
+            //print_to_serial("\n\rINT\n\r");
             asm("mov %%rax, %%cr3" : : "a"(current_pml4));
             //print_to_serial("LOADED\n\r");
             //while1();
