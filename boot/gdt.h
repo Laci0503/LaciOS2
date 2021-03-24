@@ -22,13 +22,13 @@ struct {
   struct gdt_entry tss_high;
 } gdt_table = {
     {0, 0, 0, 0x00, 0x00, 0},  /* 0x00 null  */
-    {0, 0, 0, 0x9a, 0xa0, 0},  /* 0x08 kernel code (kernel base selector) */
-    {0, 0, 0, 0x92, 0xa0, 0},  /* 0x10 kernel data */
+    {0, 0, 0, 0x9a, 0x20, 0},  /* 0x08 kernel code (kernel base selector) */
+    {0, 0, 0, 0x92, 0x00, 0},  /* 0x10 kernel data */
     {0, 0, 0, 0x00, 0x00, 0},  /* 0x18 null (user base selector) */
-    {0, 0, 0, 0x92, 0xa0, 0},  /* 0x20 user data */
-    {0, 0, 0, 0x9a, 0xa0, 0},  /* 0x28 user code */
-    {0, 0, 0, 0x92, 0xa0, 0},  /* 0x30 ovmf data */
-    {0, 0, 0, 0x9a, 0xa0, 0},  /* 0x38 ovmf code */
+    {0, 0, 0, 0xF2, 0x00, 0},  /* 0x20 user data */ //Type: 0b11110010; Acc: 0b00000000
+    {0, 0, 0, 0xfa, 0x20, 0},  /* 0x28 user code */ //Type: 0b11111010; Acc: 0b00100000
+    {0, 0, 0, 0x92, 0xa0, 0},  /* 0x30 ovmf data (not used) */
+    {0, 0, 0, 0x9a, 0xa0, 0},  /* 0x38 ovmf code (not used)*/
     {0, 0, 0, 0x89, 0xa0, 0},  /* 0x40 tss low */
     {0, 0, 0, 0x00, 0x00, 0},  /* 0x48 tss high */
 };

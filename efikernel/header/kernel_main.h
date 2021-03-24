@@ -5,6 +5,7 @@
 
 #define KEYBOARD_PORT 0x60
 #define SERIAL_PORT 0x3F8
+#define KERNEL_STACK_SIZE 0x5 /*Pages*/
 
 typedef struct {
     uint32          Type;           // Field size is 32 bits followed by 32 bit pad

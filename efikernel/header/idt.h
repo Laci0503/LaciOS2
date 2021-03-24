@@ -8,6 +8,8 @@
 #define PICSlaveCommand 0xA0
 #define PICSlaveData 0xA1
 
+#define IDT_DEBUG_OUTPUT 0
+
 typedef struct{
     uint16 offset_1;
     uint16 selector;
@@ -69,5 +71,7 @@ typedef struct{
 } CPU_state;
 
 extern CPU_state current_state;
+
+uint64 test_idt;
 
 #endif

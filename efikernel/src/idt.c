@@ -48,40 +48,45 @@ void init_idt(){
 
     outb(PICMasterData,0x0);
     outb(PICSlaveData,0x0);
+
+    test_idt=0;
 }
 
 void handleInterrupt(uint64 interruptnumber){
+    //while1();
     //while(1);
     /*outb(SERIAL_PORT,'A');*/
+    #if(IDT_DEBUG_OUTPUT)
+        test_idt++;
+        print_to_serial("int");
+        print_int_to_serial(69420);
+        print_to_serial(" ;#");
+        print_int_to_serial(test_idt);
+        print_to_serial("\n\r");
+    #endif
+
+    uint64 current_pml4;
     if(interruptnumber==HardwareInterruptOffset+0){
         if(task_scheduler_running){
-            uint64 current_pml4;
-            //asm("mov %%cr3, %%rbx" : "=b"(current_pml4) : );
-            /*print_to_serial("starting pml4: ");
-            print_hex_to_serial(current_pml4);
-            print_to_serial("\n\r");*/
-            asm("mov %%rax, %%cr3" : : "a"(kernel_pml4));
-            //if(current_pml4!=kernel_pml4)
-            /*print_to_serial("before schedule pml4: ");
-            print_hex_to_serial(current_pml4);
-            print_to_serial("\n\r");*/
+            //asm("mov %%rax, %%cr3" : : "a"(kernel_pml4));
+            load_pml4(kernel_pml4);
             schedule(&current_pml4);
-            /*print_to_serial("after schedule pml4: ");
-            print_hex_to_serial(current_pml4);
-            print_to_serial("\n\r");
-            print_to_serial("RIP: ");
-            print_hex_to_serial(current_state.rip);
-            print_to_serial("\n\r");
-            //while1()
-            print_to_serial("pml4: ");
-            print_hex_to_serial(current_pml4);
-            print_to_serial(" ");*/
-            //print_to_serial("\n\rINT\n\r");
-            asm("mov %%rax, %%cr3" : : "a"(current_pml4));
-            //print_to_serial("LOADED\n\r");
-            //while1();
+            #if(IDT_DEBUG_OUTPUT)
+                print_to_serial("Setting pml4:");
+                print_hex_to_serial(current_pml4);
+            #endif
+            //asm("mov %%rax, %%cr3" : : "a"(current_pml4));
+            load_pml4((page_map_level_4*)current_pml4);
+            #if(IDT_DEBUG_OUTPUT)
+                print_to_serial(" Set!;#");
+                print_int_to_serial(test_idt);
+                print_to_serial("\n\r");
+            #endif
         }
     }
+    //print_to_serial("Interrupt number: ");
+    //print_int_to_serial(interruptnumber);
+    //print_to_serial("\n\r");
     if(interruptnumber<0x20){
         print_to_serial("!!! Exception: ");
         print_hex_to_serial(interruptnumber);
@@ -108,8 +113,12 @@ void handleInterrupt(uint64 interruptnumber){
             print_hex_to_serial(*(uint8*)(current_state.rip+i));
             print_to_serial(" ");
         }
-        print_to_serial("\n\r!!!\n\r");
+        print_to_serial("\n\r!!!;#");
+        print_int_to_serial(test_idt);
+        print_to_serial("\n\r");
+        //while1();
     }
+    //print_to_serial("1\n\r");
     if(interruptnumber==HardwareInterruptOffset+1){
         inb(KEYBOARD_PORT);
     }
@@ -117,5 +126,9 @@ void handleInterrupt(uint64 interruptnumber){
         outb(PICMasterCommand,0x20);
         if(interruptnumber>=HardwareInterruptOffset+8)outb(PICSlaveCommand,0x20);
     }
-    //if(current_state.ss==28)current_state.ss|=0b110;
+    #if(IDT_DEBUG_OUTPUT)
+        print_to_serial("returning");
+        print_hex_to_serial(current_pml4);
+        print_to_serial("\n\r");
+    #endif
 }

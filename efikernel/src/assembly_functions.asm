@@ -26,11 +26,6 @@
 
         push rax ; save rax
 
-        mov rax, cpl3_interrupt_finished ; check if last interrupt finished
-        cmp byte [rax], 1
-        je continue_to_handler_%1
-        iretq ; if not return
-
         continue_to_handler_%1: ; if finished handle the interrupt
         mov rax, interruptNumber ; store the interruptnumber
         mov word [rax], %1
@@ -456,48 +451,12 @@ interrupts.intHandler:
     mov r14, [rax]
     add rax, 8 ; restore r15
     mov r15, [rax]
-
-    mov rax, cpu_cs ; check if return is to cpl0
-    mov rax, [rax]
-    cmp rax, 0x8
-    jne iretq_cpl3
     
     ; return to cpl0
     mov rax, cpu_rax ; restore rax
     mov rax, [rax]
 
-    ;jmp $
     iretq
-
-iretq_cpl3: ;return to cpl3
-    mov rax, cpl3_interrupt_finished ; clear the interrupt finished flag
-    mov byte [rax], 0
-
-    mov rax, cpu_rax ; restore rax from current_state
-    push qword [rax]
-
-    mov rax, cpl3_rax ; save rax to cpl_rax
-    pop qword [rax]
-
-    mov rax, cpl3_rcx ; save rcx
-    mov [rax], rcx
-
-    add rax, 8 ; save r11
-    mov [rax], r11
-
-    add rax, 8 ; pop and save rip
-    pop qword [rax]
-
-    add rsp, 8 ; dispose cs
-
-    pop r11 ; rflags into r11 for sysret; save it for cpl3 code
-    
-    pop rsp ; restore rsp
-
-    mov rcx, cpl3_returner ; go to cpl3_returner
-    ;jmp $
-
-    o64 sysret
 
 global while1
 while1:
@@ -536,42 +495,4 @@ load_gdt:
     lgdt [rdi]      ; load GDT, rdi (1st argument) contains the gdt_ptr
     mov ax, 0x40    ; TSS segment is 0x40
     ltr ax          ; load TSS
-    ret
-
-
-
-
-
-
-;cpl3
-align(4096)
-global cpl3_kernel_part
-global cpl3_reg_save
-global cpl3_returner
-cpl3_kernel_part:
-cpl3_interrupt_finished:
-    db 1
-cpl3_reg_save:
-    cpl3_rax: dq 0
-    cpl3_rcx: dq 0
-    cpl3_r11: dq 0
-    cpl3_rip: dq 0
-cpl3_returner:
-    mov rax, cpl3_r11 ; restore r11
-    mov r11, [rax]
-
-    mov rax, cpl3_rcx ; restore rcx
-    mov rcx, [rax]
-
-    mov rax, cpl3_rip ; push rip on the stack for the return
-    push qword [rax]
-
-    mov rax, cpl3_rax ; restore rax
-    mov rax, [rax]
-
-    push rax ; save rax to stack to minimize the time window for an interrupt to come while handling one
-    mov rax, cpl3_interrupt_finished
-    mov byte [rax], 1
-    pop rax
-
     ret

@@ -9,12 +9,13 @@
 #include <task_scheduler.h>
 
 void usercode();
+void usercode2();
 uint8 user_stack[2048];
 uint8 test[2048];
-uint8* kernel_stack;
+uint8* kernel_stack_real_addr;
+void* kernel_stack_vma;
 
 void kernel_main(kernel_info* kernel_info){
-    print_to_serial("kernel!!");
     framebuffer=(rgb*)kernel_info->frame_buffer;
     width=kernel_info->screen_width;
     height=kernel_info->screen_height;
@@ -109,14 +110,14 @@ void kernel_main(kernel_info* kernel_info){
     //print_to_serial("GDT_code segment: ");
     //print_int_to_serial((uint64)&(gdt->kernel_code)-(uint64)gdt);
 
-    kernel_stack=malloc(5);
+    kernel_stack_real_addr=malloc(KERNEL_STACK_SIZE);
+    for(uint32 i=0;i<KERNEL_STACK_SIZE;i++){
+        kernel_stack_vma=(void*)((uint64)map_page_to_kernel(kernel_stack_real_addr + i*4096) + 4088);
+    }
 
-    tss->rsp0=(uint64)&(kernel_stack[5*4096]);
-    tss->rsp1=(uint64)&(kernel_stack[5*4096]);
-    tss->rsp2=(uint64)&(kernel_stack[5*4096]);
-    /*tss->rsp1=0xffffffffffffffff;//(uint64)&(test[1024]);
-    tss->rsp2=0xffffffffffffffff;//(uint64)&(test[1024]);
-    tss->ist1=0xffffffffffffffff;//(uint64)&(test[1024]);*/
+    tss->rsp0=(uint64)kernel_stack_vma; //(uint64)&(kernel_stack_real_addr[5*4096])
+    tss->rsp1=(uint64)kernel_stack_vma; //(uint64)&(kernel_stack_real_addr[5*4096])
+    tss->rsp2=(uint64)kernel_stack_vma; //(uint64)&(kernel_stack_real_addr[5*4096])
 
     init_idt();
     enable_sce();
@@ -177,7 +178,7 @@ void kernel_main(kernel_info* kernel_info){
     map_system_tables();
 
     init_task_scheduler();
-    int64 idx=add_task(usercode,4096,0);
+    int64 idx=add_task(usercode2,4096,0);
     tasks[idx].state=RUNNING;
     print_to_serial("Tasks: ");
     print_hex_to_serial((uint64)tasks);
@@ -185,12 +186,31 @@ void kernel_main(kernel_info* kernel_info){
     print_to_serial("idx: ");
     print_signed_to_serial(idx);
     print_to_serial("\n\r");
-    print_to_serial("tasks[i].pml4->pdptt[4]: ");
+    print_to_serial("tasks[1].pml4: ");
     print_hex_to_serial((uint64)(tasks[idx].pml4));
     print_to_serial("\n\r");
     print_to_serial("&current_state: ");
     print_hex_to_serial((uint64)(&current_state));
     print_to_serial("\n\r");
+
+    idx=add_task(usercode,4096,0);
+    tasks[idx].state=RUNNING;
+
+    idx=add_task(usercode,4096,0);
+    tasks[idx].state=RUNNING;
+
+    idx=add_task(usercode,4096,0);
+    tasks[idx].state=RUNNING;
+
+    idx=add_task(usercode,4096,0);
+    tasks[idx].state=RUNNING;
+    
+    idx=add_task(usercode,4096,0);
+    tasks[idx].state=RUNNING;
+
+    //print_to_serial("tasks[2].pml4: ");
+    //print_hex_to_serial((uint64)(tasks[idx].pml4));
+    //print_to_serial("\n\r");
 
     start_task_scheduler();
 
@@ -203,6 +223,16 @@ void usercode(){
         if(letter>'Z')letter='A';
         asm volatile("outb %0, %1" : : "a" (letter), "Nd" (SERIAL_PORT));
         letter++;
+        for(uint64 i=0;i<50000*5000;i++)asm("NOP");
+    }
+}
+
+void usercode2(){
+    char letter='Z';
+    while(1){
+        if(letter<'A')letter='Z';
+        asm volatile("outb %0, %1" : : "a" (letter), "Nd" (SERIAL_PORT));
+        letter--;
         for(uint64 i=0;i<50000*5000;i++)asm("NOP");
     }
 }
