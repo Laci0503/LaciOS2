@@ -72,6 +72,8 @@ typedef struct{
 
 extern CPU_state current_state;
 
-uint64 test_idt;
+#if(IDT_DEBUG_OUTPUT)
+    uint64 test_idt;
+#endif
 
 #endif

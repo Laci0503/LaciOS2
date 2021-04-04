@@ -1,4 +1,7 @@
 #include <video.h>
+#include <ssfn.h>
+#include <font.h>
+#include <basic_functions.h>
 
 void draw_rectangle(uint32 startx, uint32 starty, uint32 w, uint32 h, rgb color){
     if(startx+w<=width /*&& starty>h*/){
@@ -54,3 +57,30 @@ void drawTriangle(uint16 x1, uint16 y1, uint16 x2, uint16 y2, uint16 x3, uint16 
     draw_line(x1,y1,x3,y3,color);
     draw_line(x2,y2,x3,y3,color);
 }
+
+void init_video(){
+    /*ssfn_src=(ssfn_font_t*)font;
+    ssfn_dst.ptr=(uint8_t*)framebuffer;
+    ssfn_dst.w=(int16)width;
+    ssfn_dst.h=(int16)height;
+    ssfn_dst.p=width*4; // HARD-CODED!!!!!
+    ssfn_dst.x=150;
+    ssfn_dst.y=200;
+    //ssfn_dst.bg=0xff;
+    ssfn_dst.fg=0xFFFFFFFF;
+    print_to_serial("Print error code: ");
+    print_signed_to_serial(ssfn_putc('A'));
+    print_to_serial("\n\r");
+    print_to_serial("Font address: ");
+    print_hex_to_serial(font);
+    print_to_serial("\n\r");
+    print_to_serial("Framebuffer address: ");
+    print_hex_to_serial(framebuffer);
+    print_to_serial("\n\r");
+    ssfn_putc('A');
+    ssfn_putc('A');
+    ssfn_putc('A');
+    ssfn_putc('A');*/
+}
+
+

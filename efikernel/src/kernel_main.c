@@ -10,8 +10,6 @@
 
 void usercode();
 void usercode2();
-uint8 user_stack[2048];
-uint8 test[2048];
 uint8* kernel_stack_real_addr;
 void* kernel_stack_vma;
 
@@ -20,7 +18,6 @@ void kernel_main(kernel_info* kernel_info){
     width=kernel_info->screen_width;
     height=kernel_info->screen_height;
 
-    task_scheduler_running=0;
     gdt=kernel_info->gdt;
     tss=kernel_info->tss;
     init_memory_manager(kernel_info);
@@ -51,6 +48,12 @@ void kernel_main(kernel_info* kernel_info){
     print_to_serial("\n\r");
     print_to_serial("Kernel pml4: ");
     print_hex_to_serial((uint64)kernel_pml4);
+    print_to_serial("\n\r");
+    print_to_serial("Screen width: ");
+    print_int_to_serial(width);
+    print_to_serial("\n\r");
+    print_to_serial("Screen height: ");
+    print_int_to_serial(height);
     print_to_serial("\n\r");
 
     /*void* a=malloc(1);
@@ -110,6 +113,8 @@ void kernel_main(kernel_info* kernel_info){
     //print_to_serial("GDT_code segment: ");
     //print_int_to_serial((uint64)&(gdt->kernel_code)-(uint64)gdt);
 
+
+    //Setting up kernel stack
     kernel_stack_real_addr=malloc(KERNEL_STACK_SIZE);
     for(uint32 i=0;i<KERNEL_STACK_SIZE;i++){
         kernel_stack_vma=(void*)((uint64)map_page_to_kernel(kernel_stack_real_addr + i*4096) + 4088);
@@ -123,8 +128,6 @@ void kernel_main(kernel_info* kernel_info){
     enable_sce();
     print_to_serial("&usercode: ");
     print_hex_to_serial((uint64)usercode);
-    print_to_serial("\n\r&user_stack[1023]: ");
-    print_hex_to_serial((uint64)&user_stack[1024]);
     print_to_serial("\n\rTss: ");
     print_hex_to_serial((uint64)tss);
     print_to_serial("\n\rGdt: ");
@@ -178,46 +181,34 @@ void kernel_main(kernel_info* kernel_info){
     map_system_tables();
 
     init_task_scheduler();
-    int64 idx=add_task(usercode2,4096,0);
+    int64 idx=add_task(usercode,4096,0);
     tasks[idx].state=RUNNING;
-    print_to_serial("Tasks: ");
-    print_hex_to_serial((uint64)tasks);
-    print_to_serial("\n\r");
-    print_to_serial("idx: ");
-    print_signed_to_serial(idx);
-    print_to_serial("\n\r");
-    print_to_serial("tasks[1].pml4: ");
-    print_hex_to_serial((uint64)(tasks[idx].pml4));
-    print_to_serial("\n\r");
-    print_to_serial("&current_state: ");
-    print_hex_to_serial((uint64)(&current_state));
-    print_to_serial("\n\r");
-
-    idx=add_task(usercode,4096,0);
-    tasks[idx].state=RUNNING;
-
-    idx=add_task(usercode,4096,0);
-    tasks[idx].state=RUNNING;
-
-    idx=add_task(usercode,4096,0);
-    tasks[idx].state=RUNNING;
-
-    idx=add_task(usercode,4096,0);
-    tasks[idx].state=RUNNING;
-    
-    idx=add_task(usercode,4096,0);
-    tasks[idx].state=RUNNING;
-
-    //print_to_serial("tasks[2].pml4: ");
+    //print_to_serial("Tasks: ");
+    //print_hex_to_serial((uint64)tasks);
+    //print_to_serial("\n\r");
+    //print_to_serial("idx: ");
+    //print_signed_to_serial(idx);
+    //print_to_serial("\n\r");
+    //print_to_serial("tasks[1].pml4: ");
     //print_hex_to_serial((uint64)(tasks[idx].pml4));
     //print_to_serial("\n\r");
-
+    //print_to_serial("&current_state: ");
+    //print_hex_to_serial((uint64)(&current_state));
+    //print_to_serial("\n\r");
+    //idx=add_task(usercode,4096,0);
+    //tasks[idx].state=RUNNING;
     start_task_scheduler();
+
+    //init_video();
+    //draw_rectangle(0,0,100,100,torgb(255,0,0));
+    //framebuffer[800*600-1]=torgb(255,0,0);
 
     while(1);
 }
 
 void usercode(){
+    asm("SYSCALL" : : );
+    while(1);
     char letter='A';
     while(1){
         if(letter>'Z')letter='A';

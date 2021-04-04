@@ -4,6 +4,7 @@ FILES="
     basic_functions \
     idt \
     task_scheduler \
+    syscall \
     kernel_main \
 "
 GCCFLAGS="

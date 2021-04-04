@@ -48,8 +48,10 @@ void init_idt(){
 
     outb(PICMasterData,0x0);
     outb(PICSlaveData,0x0);
-
-    test_idt=0;
+    #if(IDT_DEBUG_OUTPUT)
+        test_idt=0;
+    #endif
+    task_scheduler_running=0;
 }
 
 void handleInterrupt(uint64 interruptnumber){
@@ -113,9 +115,12 @@ void handleInterrupt(uint64 interruptnumber){
             print_hex_to_serial(*(uint8*)(current_state.rip+i));
             print_to_serial(" ");
         }
-        print_to_serial("\n\r!!!;#");
-        print_int_to_serial(test_idt);
-        print_to_serial("\n\r");
+        print_to_serial("\n\r!!!");
+        #if(IDT_DEBUG_OUTPUT)
+            print_to_serial(";#");
+            print_int_to_serial(test_idt);
+            print_to_serial("\n\r");
+        #endif
         //while1();
     }
     //print_to_serial("1\n\r");

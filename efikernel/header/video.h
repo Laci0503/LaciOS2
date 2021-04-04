@@ -2,6 +2,8 @@
 #define _VIDEO_H
 #include <types.h>
 
+#define SSFN_CONSOLEBITMAP_TRUECOLOR
+
 typedef struct{
     uint8 b;
     uint8 g;
@@ -17,5 +19,6 @@ void draw_rectangle(uint32 startx, uint32 starty, uint32 width, uint32 height, r
 void draw_rectangle_filled(uint32 startx, uint32 starty, uint32 w, uint32 h, rgb color); // Left bottom corner, size
 rgb torgb(uint8 r, uint8 g, uint8 b);
 void draw_line(uint32 x1, uint32 y1, uint32 x2, uint32 y2, rgb color);
+void init_video();
 
 #endif

@@ -464,14 +464,26 @@ while1:
 
 global enable_sce
 enable_sce:
-    mov rcx, 0xc0000080
-    rdmsr
+    mov rcx, 0xc0000080 ; EFER MSR
+    rdmsr ; SCE (System call extenstions) bit
     or eax, 1
     wrmsr
-    mov rcx, 0xc0000081
+    mov rcx, 0xc0000081 ; STAR MSR System Call Target Address (R/W)
     rdmsr
-    mov edx, 0x00180008
+    mov edx, 0x00180008 ; User base selector (0x0018), kernel base selector (0x0008)
     wrmsr
+
+    mov rcx, 0xc0000082 ; LSTART MSR System Call tartget RIP
+    mov rax, syscall_entry ; syscall_entry address
+    and rax, 0xffffffff ; only low 32 bits
+
+    mov rdx, syscall_entry ; syscall_entry address
+    shr rdx, 32 ; only high 32 bits into
+    wrmsr ; write MSR
+
+    mov rcx, 0xc0000082 ; FMASK MSR Masks Rflags with it when a syscall is executed
+    mov eax, 0xffffffff ; Do not mask
+    wrmsr ; write MSR
     ret
 
 global enter_userspace
@@ -496,3 +508,60 @@ load_gdt:
     mov ax, 0x40    ; TSS segment is 0x40
     ltr ax          ; load TSS
     ret
+
+global syscall_argumens
+    syscall_rip: dq 0 ; rcx
+    syscall_arg_0: dq 0 ; rdi
+    syscall_arg_1: dq 0 ; rsi
+    syscall_arg_2: dq 0 ; rdx
+    syscall_arg_3: dq 0 ; rax
+    syscall_arg_4: dq 0 ; r8
+    syscall_arg_5: dq 0 ; r9
+    syscall_rflags: dq 0 ; r11
+    syscall_rsp: dq 0 ; rsp
+    syscall_retval0 dq 0 ; rax
+    syscall_retval1 dq 0 ; rdx
+
+extern syscall_handler
+
+global syscall_entry
+syscall_entry:
+    mov rax, syscall_rip ; save rip from rcx
+    mov [rax], rcx
+    add rax, 8 ; save arg0 from rdi
+    mov [rax], rdi
+    add rax, 8 ; save arg1 from rsi
+    mov [rax], rsi
+    add rax, 8 ; save arg2 from rdx
+    mov [rax], rdx
+    add rax, 8 ; save arg3 from rax
+    mov [rax], rax
+    add rax, 8 ; save arg4 from r8
+    mov [rax], r8
+    add rax, 8 ; save arg5 from r9
+    mov [rax], r9
+    add rax, 8 ; save rflags from r11
+    mov [rax], r11
+    add rax, 8 ; save rsp
+    mov [rax], rsp
+    add rax, 8 ; reset return value0 for security reasons
+    mov qword [rax], 0
+    add rax, 8 ; reset return value1 for security reasons
+    mov qword [rax], 0
+
+    ;mov rax, syscall_handler ; call c function
+    ;call rax
+
+global return_syscall
+return_syscall:
+    mov rax, syscall_rsp ; restore rsp
+    mov rsp, [rax]
+    sub rax, 8 ; restore rflags into r11
+    mov r11, [rax]
+    mov rax, syscall_rip ; restore rip into rcx
+    mov rcx, [rax]
+    mov rax, syscall_retval1 ; mov return value1 to rdx
+    mov rdx, [rax]
+    mov rax, syscall_retval0 ; mov return value0 to rax
+    mov rax, [rax]
+    o64 sysret
