@@ -208,7 +208,7 @@ void kernel_main(kernel_info* kernel_info){
 
 void usercode(){
     asm("SYSCALL" : : );
-    while(1);
+    //while(1);
     char letter='A';
     while(1){
         if(letter>'Z')letter='A';

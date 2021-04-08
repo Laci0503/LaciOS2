@@ -473,15 +473,16 @@ enable_sce:
     mov edx, 0x00180008 ; User base selector (0x0018), kernel base selector (0x0008)
     wrmsr
 
-    mov rcx, 0xc0000082 ; LSTART MSR System Call tartget RIP
+    mov rcx, 0xc0000082 ; LSTAR MSR System Call tartget RIP
     mov rax, syscall_entry ; syscall_entry address
-    and rax, 0xffffffff ; only low 32 bits
+    ;and rax, 0xffffffff ; only low 32 bits
 
     mov rdx, syscall_entry ; syscall_entry address
-    shr rdx, 32 ; only high 32 bits into
+    shr rdx, 32 ; only high 32 bits into rdx
+    
     wrmsr ; write MSR
 
-    mov rcx, 0xc0000082 ; FMASK MSR Masks Rflags with it when a syscall is executed
+    mov rcx, 0xc0000083 ; FMASK MSR Masks Rflags with it when a syscall is executed
     mov eax, 0xffffffff ; Do not mask
     wrmsr ; write MSR
     ret
@@ -528,17 +529,17 @@ global syscall_entry
 syscall_entry:
     mov rax, syscall_rip ; save rip from rcx
     mov [rax], rcx
-    add rax, 8 ; save arg0 from rdi
+    add rax, 8 ; save main_class from rdi
     mov [rax], rdi
-    add rax, 8 ; save arg1 from rsi
+    add rax, 8 ; save sub_class from rsi
     mov [rax], rsi
-    add rax, 8 ; save arg2 from rdx
+    add rax, 8 ; save arg0 from rdx
     mov [rax], rdx
-    add rax, 8 ; save arg3 from rax
+    add rax, 8 ; save arg1 from rax
     mov [rax], rax
-    add rax, 8 ; save arg4 from r8
+    add rax, 8 ; save arg2 from r8
     mov [rax], r8
-    add rax, 8 ; save arg5 from r9
+    add rax, 8 ; save arg3 from r9
     mov [rax], r9
     add rax, 8 ; save rflags from r11
     mov [rax], r11
@@ -549,8 +550,8 @@ syscall_entry:
     add rax, 8 ; reset return value1 for security reasons
     mov qword [rax], 0
 
-    ;mov rax, syscall_handler ; call c function
-    ;call rax
+    mov rax, syscall_handler ; call c function
+    call rax
 
 global return_syscall
 return_syscall:
