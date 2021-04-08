@@ -4,5 +4,8 @@
 
 void syscall_handler(){
     print_to_serial("SYSCALL\n\r");
+}
+
+void syscall_init(){
     
 }
