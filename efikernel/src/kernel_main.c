@@ -7,6 +7,8 @@
 #include <gdt.h>
 #include <idt.h>
 #include <task_scheduler.h>
+#include <syscall.h>
+#include "../../user_api/header/syscalls.h"
 
 void usercode();
 void usercode2();
@@ -207,12 +209,15 @@ void kernel_main(kernel_info* kernel_info){
 }
 
 void usercode(){
-    asm("SYSCALL" : : );
+    //asm("SYSCALL" : : );
     //while(1);
     char letter='A';
+    char string[]="Test string\n\r";
     while(1){
         if(letter>'Z')letter='A';
-        asm volatile("outb %0, %1" : : "a" (letter), "Nd" (SERIAL_PORT));
+        //asm volatile("outb %0, %1" : : "a" (letter), "Nd" (SERIAL_PORT));
+        //asm volatile("cli");
+        syscall_wrapper(SYSCALL_IO,SYSCALL_IO_SERIAL,SYSCALL_IO_WRITE_STRING,string,0,0);
         letter++;
         for(uint64 i=0;i<50000*5000;i++)asm("NOP");
     }

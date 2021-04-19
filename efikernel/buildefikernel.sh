@@ -35,7 +35,9 @@ done
 
 nasm efikernel/src/assembly_functions.asm -o build/assembly_functions.o -f elf64
 
-objfiles="build/assembly_functions.o"
+objfiles="build/assembly_functions.o \
+    build/user_api/syscalls.o \
+"
 
 for file in $FILES
 do

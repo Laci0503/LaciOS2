@@ -483,7 +483,7 @@ enable_sce:
     wrmsr ; write MSR
 
     mov rcx, 0xc0000083 ; FMASK MSR Masks Rflags with it when a syscall is executed
-    mov eax, 0xffffffff ; Do not mask
+    mov eax, 0xFFFFFFFF ; Do not mask
     wrmsr ; write MSR
     ret
 
@@ -510,7 +510,8 @@ load_gdt:
     ltr ax          ; load TSS
     ret
 
-global syscall_argumens
+global syscall_args
+syscall_args:
     syscall_rip: dq 0 ; rcx
     syscall_arg_0: dq 0 ; rdi
     syscall_arg_1: dq 0 ; rsi
@@ -527,6 +528,8 @@ extern syscall_handler
 
 global syscall_entry
 syscall_entry:
+    cli
+    push rax ; save rax
     mov rax, syscall_rip ; save rip from rcx
     mov [rax], rcx
     add rax, 8 ; save main_class from rdi
@@ -536,7 +539,7 @@ syscall_entry:
     add rax, 8 ; save arg0 from rdx
     mov [rax], rdx
     add rax, 8 ; save arg1 from rax
-    mov [rax], rax
+    pop qword [rax] ; pop into arg1
     add rax, 8 ; save arg2 from r8
     mov [rax], r8
     add rax, 8 ; save arg3 from r9

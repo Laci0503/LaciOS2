@@ -30,6 +30,7 @@ typedef struct{
     GDT* gdt;
     TSS* tss;
     uint64 kernel_next_page;
+    uint64 acpi_rsdp;
 } kernel_info;
 
 void kernel_main(kernel_info* kernel_info);
