@@ -9,6 +9,7 @@ mkdir -p efifilesystem/EFI/BOOT
 mkdir -p efifilesystem/lacios
 
 sh boot/buildefi.sh
+sh user_api/build_user_api.sh
 sh efikernel/buildefikernel.sh
 
 rm image/LaciOS.img image/fat.img

@@ -150,6 +150,7 @@ typedef struct{
     void* gdt;
     void* tss;
     uint64 kernel_next_page;
+    uint64 acpi_rsdp;
     
 } kernel_info;
 
@@ -261,6 +262,36 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) //Mostly from o
             uint8* kernel_file=AllocatePool(kernelfilesize);
             uefi_call_wrapper(kernelfile->Read, 3, kernelfile, &kernelfilesize, kernel_file);
             uefi_call_wrapper(kernelfile->Close, 1, kernelfile);
+
+            // Find ACPI information
+
+            EFI_GUID acpi_guid = {0x8868e871,0xe4f1,0x11d3,0xbc,0x22,0x80,0xc7,0x3c,0x88,0x81};
+
+            Print(L"Number of UEFI system table entries: %d\n\r", SystemTable->NumberOfTableEntries);
+            Print(L"System table entries: \n\r");
+            uint64 acpi_rsdp_addr;
+            for(uint32 i=0;i<SystemTable->NumberOfTableEntries;i++){
+                Print(L"#%d GUID: %x-%x-%x-%x-00",
+                    i,
+                    SystemTable->ConfigurationTable[i].VendorGuid.Data1,
+                    SystemTable->ConfigurationTable[i].VendorGuid.Data2,
+                    SystemTable->ConfigurationTable[i].VendorGuid.Data3,
+                    SystemTable->ConfigurationTable[i].VendorGuid.Data4[0]<<8 | SystemTable->ConfigurationTable[i].VendorGuid.Data4[1]                    
+                );
+                for (uint8 j=0;j<6;j++){
+                    Print(L"%x",
+                        SystemTable->ConfigurationTable[i].VendorGuid.Data4[2+j]
+                    );
+                }
+                Print(L"; Pointer: 0x%x;",
+                    SystemTable->ConfigurationTable[i].VendorTable
+                );
+                if(CompareGuid(&(SystemTable->ConfigurationTable[i].VendorGuid),&AcpiTableGuid)==0){
+                    Print(L" ACPI root table;");
+                    acpi_rsdp_addr=SystemTable->ConfigurationTable[i].VendorTable;
+                }
+                Print(L"\n\r");
+            }
             
             // Memory map, from some random website on the internet
             status = EFI_SUCCESS;
@@ -364,6 +395,7 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) //Mostly from o
             gdt_table.tss_low.limit15_0 = sizeof(tss);
             gdt_table.tss_high.limit15_0 = (tss_base >> 32) & 0xffff;
             gdt_table.tss_high.base15_0 = (tss_base >> 48) & 0xffff;
+            tss.iopb_offset=sizeof(tss);
 
             struct table_ptr gdt_ptr = { sizeof(gdt_table)-1, (uint64)&gdt_table };
             load_gdt(&gdt_ptr);
@@ -597,6 +629,7 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) //Mostly from o
             kernel_info->gdt=&gdt_table;
             kernel_info->tss=&tss;
             kernel_info->kernel_next_page=i;
+            kernel_info->acpi_rsdp=acpi_rsdp_addr;
             
             uint64 kernel_virt_addr=/*offset*/(uint64)0 | (uint64)0<<12/*p_idx*/ | pt_index<<21 | pd_index<<30 | pdpt_index<<39;
             jmp_to_kernel((void*)kernel_stack_vma, (void*)kernel_virt_addr,(void*)kernel_info_vma);

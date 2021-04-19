@@ -41,7 +41,6 @@ struct tss {
     uint64_t ist5;      uint64_t ist6;      uint64_t ist7;
     uint64_t reserved2; uint16_t reserved3; uint16_t iopb_offset;
 } tss;
-int a=sizeof(tss);
 
 #pragma pack ()
 
