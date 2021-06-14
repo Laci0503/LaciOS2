@@ -2,8 +2,6 @@
 #define _GDT_H
 #include <types.h>
 
-#include <types.h>
-
 #pragma pack (1)
 typedef struct{
     uint16 limit15_0;            uint16 base15_0;

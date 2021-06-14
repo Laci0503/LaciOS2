@@ -1,14 +1,7 @@
 #ifndef _IDT_H
 #define _IDT_H
 #include <types.h>
-
-#define HardwareInterruptOffset 0x20
-#define PICMasterCommand 0x20
-#define PICMasterData 0x21
-#define PICSlaveCommand 0xA0
-#define PICSlaveData 0xA1
-
-#define IDT_DEBUG_OUTPUT 0
+#include <config.h>
 
 typedef struct{
     uint16 offset_1;

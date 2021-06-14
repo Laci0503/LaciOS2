@@ -32,27 +32,34 @@ void init_memory_manager(kernel_info* kernel_info){
     }
 
     usable_page_count=0;
-    print_to_serial("Memmap: \n\r");
+    #if(MEMORY_DEBUG)
+        print_to_serial("Memmap: \n\r");
+    #endif
     for(uint64 i=0;i<memmap_desc_count;i++){
         EFI_MEMORY_DESCRIPTOR* descriptor = (EFI_MEMORY_DESCRIPTOR*)((uint64)memmap+i*memmap_desc_size);
-        print_to_serial("idx: ");
-        print_int_to_serial(i);
-        print_to_serial("; addr: ");
-        print_hex_to_serial(descriptor->PhysicalStart);
-        print_to_serial("; length: ");
-        print_int_to_serial(descriptor->NumberOfPages);
-        print_to_serial("; type: ");
-        print_int_to_serial(descriptor->Type);
+        #if(MEMORY_DEBUG)
+            print_to_serial("idx: ");
+            print_int_to_serial(i);
+            print_to_serial("; addr: ");
+            print_hex_to_serial(descriptor->PhysicalStart);
+            print_to_serial("; length: ");
+            print_int_to_serial(descriptor->NumberOfPages);
+            print_to_serial("; type: ");
+            print_int_to_serial(descriptor->Type);
+        #endif
         if(descriptor->Type==EfiConventionalMemory){
             uint64 pageframe=descriptor->PhysicalStart/4096;
             usable_page_count+= descriptor->NumberOfPages;
             for(uint64 i=pageframe;i<pageframe+descriptor->NumberOfPages;i++){
                 bitmap[(i)/64] &= ~(0x1ULL << (i%64));
             }
-            print_to_serial(" Added");
+            #if(MEMORY_DEBUG)
+                print_to_serial(" Added");
+            #endif
         }
-        
-        print_to_serial("\n\r");
+        #if(MEMORY_DEBUG)
+            print_to_serial("\n\r");
+        #endif
     }
     for(uint64 i=main_part_addr/4096;i<main_part_addr/4096+kernel_info->used_pages;i++){
         bitmap[(i)/64] |= (0x1ULL << (i%64));
@@ -71,11 +78,27 @@ void init_memory_manager(kernel_info* kernel_info){
     kernel_start_page=((uint64)kernel_main)>>12;
     kernel_next_page=kernel_info->kernel_next_page;
 
+    heap=(void*)((KERNEL_VMA_PDPT << 39) | (KERNEL_HEAP_START_PD << 30));
+    last_free_heap_header=(heap_header*)heap;
+    last_free_heap_header->length=(KERNEL_HEAP_SIZE<<12) - (sizeof(heap_header)*2);
+    last_free_heap_header->front=1;
+    last_free_heap_header->allocated=0;
+    
+    ((heap_header*)((uint64)heap+KERNEL_HEAP_SIZE-sizeof(heap_header)))->length=(KERNEL_HEAP_SIZE<<12) - (sizeof(heap_header)*2);
+    ((heap_header*)((uint64)heap+KERNEL_HEAP_SIZE-sizeof(heap_header)))->front=0;
+    ((heap_header*)((uint64)heap+KERNEL_HEAP_SIZE-sizeof(heap_header)))->allocated=0;
+
+    #if(MEMORY_DEBUG)
+        print_to_serial("last_free_heap_header: ");
+        print_hex_to_serial((uint64)last_free_heap_header);
+        print_to_serial("\n\r");
+    #endif
 }
 
 //TODO: Nincs kezelve ha nem tud annyit lefoglalni
+//TODO: Csak akkor működik ha a kernel_pml4 van használatban, nem ellenőrzi
 
-void* malloc(uint64 page_count){ //TODO: Lehetne még optimalizálni
+void* malloc_page(uint64 page_count){ //TODO: Lehetne még optimalizálni
     uint64 retval;
     if(page_count<first_avail_length){ //kisebb mint az első
         retval=first_avail_idx*4096;
@@ -106,7 +129,7 @@ void* malloc(uint64 page_count){ //TODO: Lehetne még optimalizálni
     return (void*)retval;
 }
 
-void free(void* addr, uint64 page_count){
+void free_page(void* addr, uint64 page_count){
     uint64 startpage=(uint64)addr >> 12;
     /*print_to_serial("Startpage: ");
     print_int_to_serial(startpage);*/
@@ -171,23 +194,118 @@ void* map_page_to_kernel(void* address){
     if((j+1)%512==0){
         pt_index++;
         if(pt_index!=512){
-            ((uint64*)((uint64)(((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)malloc(1) | flags;
+            ((uint64*)((uint64)(((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)malloc_page(1) | flags;
         }else{
             pd_index++;
             pt_index=0;
             if(pd_index!=512){
-                ((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)((uint64)malloc(1) | flags);
-                ((uint64*)((uint64)(((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)malloc(1) | flags);
+                ((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)((uint64)malloc_page(1) | flags);
+                ((uint64*)((uint64)(((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)malloc_page(1) | flags);
             }
             else {
                 pdpt_index++;
                 pd_index=0;
-                pml4[pdpt_index]=(uint64***)((uint64)malloc(1) | flags);
-                ((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)malloc(1) | flags;
-                ((uint64*)((uint64)(((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)malloc(1) | flags);
+                pml4[pdpt_index]=(uint64***)((uint64)malloc_page(1) | flags);
+                ((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)malloc_page(1) | flags;
+                ((uint64*)((uint64)(((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)malloc_page(1) | flags);
             }
         }
     }
     kernel_next_page++;
     return (void*)kernel_addr;
+}
+
+void* malloc(uint64 size){
+    if(last_free_heap_header!=NULL){ // If-ek sorrendjével lehet még optimalizálni (kivenni az &&-t)
+        #if(MEMORY_DEBUG)
+            print_to_serial("last not null");
+        #endif
+        if(last_free_heap_header->length>=size && last_free_heap_header->length < size+sizeof(heap_header)*2){
+            last_free_heap_header->allocated=1;
+            ((heap_header*)((uint64)last_free_heap_header+last_free_heap_header->length+sizeof(heap_header)))->allocated=1;
+            void* return_addr=(void*)((uint64)last_free_heap_header+sizeof(heap_header));
+            last_free_heap_header=NULL;
+            return return_addr;
+        }else if (last_free_heap_header->length>size+sizeof(heap_header)*2){
+            #if(MEMORY_DEBUG)
+                print_to_serial("last_free_heap_header: ");
+                print_hex_to_serial((uint64)last_free_heap_header);
+                print_to_serial("\n\r");
+            #endif
+            uint64 free_header_length=last_free_heap_header->length;
+            heap_header* front_header=last_free_heap_header;
+            front_header->allocated=1;
+            front_header->length=size;
+            heap_header* end_header=(heap_header*)((uint64)front_header+sizeof(heap_header)+size);
+            end_header->length=size;
+            end_header->allocated=1;
+            end_header->front=0;
+            heap_header* free_front=(heap_header*)((uint64)end_header+sizeof(heap_header));
+            free_front->allocated=0;
+            free_front->front=1;
+            free_front->length=free_header_length - sizeof(heap_header)*2 - size;
+            last_free_heap_header=free_front;
+            heap_header* free_end=(heap_header*)((uint64)front_header + sizeof(heap_header)+free_header_length);
+            free_end->length=free_front->length;
+            return (void*)((uint64)front_header + sizeof(heap_header));
+        }
+    }
+    heap_header* header = heap;
+    while(!(header->allocated==0 && header->length>=size)){
+        if((uint64)header + header->length + sizeof(heap_header)*2 >= (uint64)heap + KERNEL_HEAP_SIZE << 12)return NULL;
+        header = (heap_header*)((uint64)header + header->length + sizeof(heap_header)*2);
+    }
+
+    if(header->length>=size && header->length < size+sizeof(heap_header)*2){
+        header->allocated=1; // Flag allocated
+        ((heap_header*)((uint64)header+header->length+sizeof(heap_header)))->allocated=1; // Flag end header allocated
+        return (void*)(header+sizeof(heap_header));
+    }else if (header->length>size+sizeof(heap_header)*2){
+        uint64 free_header_length=header->length;
+        heap_header* front_header=header;
+        front_header->allocated=1;
+        front_header->length=size;
+        heap_header* end_header=(heap_header*)((uint64)front_header+sizeof(heap_header)+size);
+        end_header->length=size;
+        end_header->allocated=1;
+        end_header->front=0;
+        heap_header* free_front=(heap_header*)((uint64)end_header+sizeof(heap_header));
+        free_front->allocated=0;
+        free_front->front=1;
+        free_front->length=free_header_length - sizeof(heap_header)*2 - size;
+        heap_header* free_end=(heap_header*)((uint64)front_header + sizeof(heap_header)+free_header_length);
+        free_end->length=free_front->length;
+        return (void*)((uint64)front_header + sizeof(heap_header));
+    }
+
+}
+
+void free(void* address){
+    if((uint64)address<(uint64)heap || (uint64)address > (uint64)heap + KERNEL_HEAP_SIZE << 12){
+        #if(MEMORY_DEBUG)
+            // Some error message maybe ¯\_(ツ)_/¯
+        #endif
+        return;
+    }
+    heap_header* header = (heap_header*)((uint64)address - sizeof(heap_header));
+    heap_header* end_header = (heap_header*)((uint64)header + header->length + sizeof(heap_header));
+    header->allocated=0;
+    end_header->allocated=0;
+    heap_header* before_header=(heap_header*)((uint64)header - sizeof(heap_header));
+    if((uint64)before_header > (uint64)heap)
+    if(before_header->allocated==0){
+        uint64 new_length=before_header->length + header->length + sizeof(heap_header)*2;
+        heap_header* before_start_header=(heap_header*)((uint64)before_header - before_header->length - sizeof(heap_header));
+        before_start_header->length=new_length;
+        end_header->length=new_length;
+        header=before_start_header;
+    }
+    heap_header* next_header = (heap_header*)((uint64)end_header+sizeof(heap_header));
+    if((uint64)next_header < (uint64)heap + KERNEL_HEAP_SIZE << 12)
+    if(next_header->allocated==0){
+        uint64 new_length = header->length + next_header->length + sizeof(heap_header)*2;
+        heap_header* next_end_header = (heap_header*)((uint64)next_header + next_header->length + sizeof(heap_header));
+        next_end_header->length=new_length;
+        header->length=new_length;
+    }
 }

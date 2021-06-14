@@ -344,7 +344,7 @@ interrupts.intHandler:
     mov [rax], rbx
 
     mov rax, interruptNumber ; move the interrupt number into bx
-    mov word bx, [rax]
+    mov bx, word [rax]
 
     cmp word bx, 8 ;check if exception pushes error code
     je continue
@@ -405,6 +405,7 @@ interrupts.intHandler:
     pop qword [rax] ; save ss
 
     mov rax, interruptNumber ; pass interruptNumber as argument in rdi
+    mov rdi, 0 ; clear rdi
     mov di, word [rax]
 
     mov rax, handleInterrupt ; call handleInterrupt

@@ -50,6 +50,6 @@ void syscall_io_serial(){
         return;
     }
     if(syscall_args.arg_0==SYSCALL_IO_WRITE_STRING){
-        print_to_serial(syscall_args.arg_1);
+        print_to_serial((char*)syscall_args.arg_1);
     }
 }

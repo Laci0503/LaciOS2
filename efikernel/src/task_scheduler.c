@@ -7,7 +7,7 @@
 void init_task_scheduler(){
     task_switch_timer=0;
     for(uint32 i=0;i<sizeof(tasks_active);i++)((uint8*)tasks_active)[i]=0;
-    tasks=(task*)malloc((sizeof(task)*MAX_TASK_NUM)/4096+1);
+    tasks=(task*)malloc_page((sizeof(task)*MAX_TASK_NUM)/4096+1);
     task_count=0;
     task_switch_timer=1;
     cycle_per_task=5;
@@ -22,7 +22,7 @@ int64 add_task(void* location, uint64 size, uint64 entry_point) { //returns the 
         if(i==MAX_TASK_NUM)return -1;
         if(!task_exists(i))break;
     }
-    tasks[i].pml4=malloc(1);
+    tasks[i].pml4=malloc_page(1);
     //for(uint32 j=0;j<512;j++)*(uint64*)(&(tasks[i]->pml4.page_directory_pointer_tables[j]))=0;
     tasks[i].pml4->page_directory_pointer_tables[4]=kernel_pml4->page_directory_pointer_tables[4];
     uint64 page_count=size/4096+6;
@@ -32,30 +32,30 @@ int64 add_task(void* location, uint64 size, uint64 entry_point) { //returns the 
     uint64 flags=0b111;
     uint64**** pml4=(uint64****)(tasks[i].pml4);
 
-    pml4[pdpt_index]=(uint64***)((uint64)malloc(1) | flags);
-    ((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)malloc(1) | flags;
-    ((uint64*)((uint64)(((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)malloc(1) | flags);
+    pml4[pdpt_index]=(uint64***)((uint64)malloc_page(1) | flags);
+    ((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)malloc_page(1) | flags;
+    ((uint64*)((uint64)(((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)malloc_page(1) | flags);
     for(uint64 j=0;j<page_count;j++){
-        void* pageframe=malloc(1);
+        void* pageframe=malloc_page(1);
         ((uint64*)(((uint64)((uint64*)((uint64)(((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]) & PAGE_ADDR_MASK))[j%512] = (uint64)pageframe | flags;
         for(uint32 k=0;k<512;k++)((uint64*)pageframe)[k]=((uint64*)(location+j*4096))[k];
         if((j+1)%512==0){
             pt_index++;
             if(pt_index!=512){
-                ((uint64*)((uint64)(((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)malloc(1) | flags;
+                ((uint64*)((uint64)(((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)malloc_page(1) | flags;
             }else{
                 pd_index++;
                 pt_index=0;
                 if(pd_index!=512){
-                    ((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)((uint64)malloc(1) | flags);
-                    ((uint64*)((uint64)(((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)malloc(1) | flags);
+                    ((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)((uint64)malloc_page(1) | flags);
+                    ((uint64*)((uint64)(((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)malloc_page(1) | flags);
                 }
                 else {
                     pdpt_index++;
                     pd_index=0;
-                    pml4[pdpt_index]=(uint64***)((uint64)malloc(1) | flags);
-                    ((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)malloc(1) | flags;
-                    ((uint64*)((uint64)(((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)malloc(1) | flags);
+                    pml4[pdpt_index]=(uint64***)((uint64)malloc_page(1) | flags);
+                    ((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)malloc_page(1) | flags;
+                    ((uint64*)((uint64)(((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)malloc_page(1) | flags);
                 }
             }
         }

@@ -5,6 +5,8 @@ FILES="
     idt \
     task_scheduler \
     syscall \
+    acpi \
+    device_manager \
     kernel_main \
 "
 GCCFLAGS="
@@ -17,6 +19,7 @@ GCCFLAGS="
     -mno-sse2 \
     -c \
     -Iefikernel/header \
+    -Iconfig \
     -ffunction-sections \
 "
 

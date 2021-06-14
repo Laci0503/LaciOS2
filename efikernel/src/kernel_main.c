@@ -8,6 +8,8 @@
 #include <idt.h>
 #include <task_scheduler.h>
 #include <syscall.h>
+#include <acpi.h>
+#include <device_manager.h>
 #include "../../user_api/header/syscalls.h"
 
 void usercode();
@@ -16,11 +18,47 @@ uint8* kernel_stack_real_addr;
 void* kernel_stack_vma;
 
 void kernel_main(kernel_info* kernel_info){
+
+    //print_to_serial("THIS IS KERNEL YEEEY!");
+
     framebuffer=(rgb*)kernel_info->frame_buffer;
     width=kernel_info->screen_width;
     height=kernel_info->screen_height;
 
-    gdt=kernel_info->gdt;
+    init_memory_manager(kernel_info);
+
+    print_to_serial("sizeof(heap_header): ");
+    print_hex_to_serial(sizeof(heap_header));
+    print_to_serial("\n\r");
+
+    void* t=malloc((KERNEL_HEAP_SIZE<<12) - 16);
+    print_to_serial("t: ");
+    print_hex_to_serial(t);
+    print_to_serial("\n\r");
+    free(t);
+    print_to_serial("freed");
+
+    void* a=malloc(15);
+    print_to_serial("a: ");
+    print_hex_to_serial(a);
+    print_to_serial("\n\r");
+    void* b=malloc(15);
+    print_to_serial("b: ");
+    print_hex_to_serial(b);
+    print_to_serial("\n\r");
+    void* c=malloc(15);
+    print_to_serial("c: ");
+    print_hex_to_serial(c);
+    print_to_serial("\n\r");
+
+    free(b);
+    b=malloc(15);
+
+    print_to_serial("b: ");
+    print_hex_to_serial(b);
+    print_to_serial("\n\r");
+
+    /*gdt=kernel_info->gdt;
     tss=kernel_info->tss;
     init_memory_manager(kernel_info);
     print_to_serial("\n\rRam amount: \n\r");
@@ -57,74 +95,21 @@ void kernel_main(kernel_info* kernel_info){
     print_to_serial("Screen height: ");
     print_int_to_serial(height);
     print_to_serial("\n\r");
-
-    /*void* a=malloc(1);
-
-    void* b=malloc(1);
-    void* c=malloc(1);
-
-    print_to_serial("a: ");
-    print_hex_to_serial(a);
+    print_to_serial("RSDP2 PTR: ");
+    print_hex_to_serial(kernel_info->acpi_rsdp);
     print_to_serial("\n\r");
-    print_to_serial("b: ");
-    print_hex_to_serial(b);
-    print_to_serial("\n\r");
-    print_to_serial("c: ");
-    print_hex_to_serial(c);
-    print_to_serial("\n\r");
-    print_to_serial("First_avail_idx: ");
-    print_hex_to_serial(first_avail_idx);
-    print_to_serial("\n\r");
-    print_to_serial("First_avail_length: ");
-    print_hex_to_serial(first_avail_length);
-    print_to_serial("\n\r");
-
-    free(c,1);
-    print_to_serial("free(b,1) First_avail_idx: ");
-    print_hex_to_serial(first_avail_idx);
-    print_to_serial("\n\r");
-    print_to_serial("First_avail_length: ");
-    print_hex_to_serial(first_avail_length);
-    print_to_serial("\n\r");
-    free(b,1);
-    print_to_serial("free(c,1) First_avail_idx: ");
-    print_hex_to_serial(first_avail_idx);
-    print_to_serial("\n\r");
-    print_to_serial("First_avail_length: ");
-    print_hex_to_serial(first_avail_length);
-    print_to_serial("\n\r");
-    b=malloc(1);
-    c=malloc(1);
-
-    print_to_serial("a: ");
-    print_hex_to_serial(a);
-    print_to_serial("\n\r");
-    print_to_serial("b: ");
-    print_hex_to_serial(b);
-    print_to_serial("\n\r");
-    print_to_serial("c: ");
-    print_hex_to_serial(c);
-    print_to_serial("\n\r");
-    print_to_serial("First_avail_idx: ");
-    print_hex_to_serial(first_avail_idx);
-    print_to_serial("\n\r");
-    print_to_serial("First_avail_length: ");
-    print_hex_to_serial(first_avail_length);
-    print_to_serial("\n\r");*/
-
-    //print_to_serial("GDT_code segment: ");
-    //print_int_to_serial((uint64)&(gdt->kernel_code)-(uint64)gdt);
-
+    uint64 rsdp2_address = kernel_info->acpi_rsdp;
 
     //Setting up kernel stack
-    kernel_stack_real_addr=malloc(KERNEL_STACK_SIZE);
+    kernel_stack_real_addr=malloc_page(KERNEL_STACK_SIZE);
     for(uint32 i=0;i<KERNEL_STACK_SIZE;i++){
         kernel_stack_vma=(void*)((uint64)map_page_to_kernel(kernel_stack_real_addr + i*4096) + 4088);
     }
 
-    tss->rsp0=(uint64)kernel_stack_vma; //(uint64)&(kernel_stack_real_addr[5*4096])
-    tss->rsp1=(uint64)kernel_stack_vma; //(uint64)&(kernel_stack_real_addr[5*4096])
-    tss->rsp2=(uint64)kernel_stack_vma; //(uint64)&(kernel_stack_real_addr[5*4096])
+    uint64 kernel_secondary_stack_top=((KERNEL_VMA_PDPT << 39) | (KERNEL_SECONDARY_STACK_START_PD << 30)) + (KERNEL_SECONDARY_STACK_SIZE<<12) - 8;
+    tss->rsp0=kernel_secondary_stack_top; //(uint64)&(kernel_stack_real_addr[5*4096])
+    tss->rsp1=kernel_secondary_stack_top; //(uint64)&(kernel_stack_real_addr[5*4096])
+    tss->rsp2=kernel_secondary_stack_top; //(uint64)&(kernel_stack_real_addr[5*4096])
 
     init_idt();
     enable_sce();
@@ -135,43 +120,6 @@ void kernel_main(kernel_info* kernel_info){
     print_to_serial("\n\rGdt: ");
     print_hex_to_serial((uint64)gdt);
     print_to_serial("\n\r");
-    //asm("cli");
-    //while1();
-    //enter_userspace((uint64)usercode,(uint64)&(user_stack[1023]),0x202);
-    /*char letter='A';
-    while(1){
-        if(letter>'Z')letter='A';
-        outb(SERIAL_PORT,letter);
-        letter++;
-        for(uint32 i=0;i<5000;i++){
-            for(uint32 j=0;j<50000;j++){
-                asm("NOP");
-            }
-        }
-    }*/
-    /*uint64 a=0
-
-    /*char letter='A';
-    while(1){
-        if(letter>'Z')letter='A';
-        outb(SERIAL_PORT,letter);
-        letter++;
-        for(uint32 i=0;i<5000;i++){
-            for(uint32 j=0;j<50000;j++){
-                asm("NOP");
-            }
-        }
-    }*/
-
-    //add_task(usercode,sizeof(usercode),0);
-    //print_to_serial("sizeof(usercode): ");
-    //print_int_to_serial(sizeof(usercode));
-    //print_to_serial("\n\r");
-
-    //enter_userspace((uint64)usercode,(uint64)(&user_stack[1023]),0x202);
-
-    //tasks[idx].state=RUNNING;*/
-    //init_task_scheduler();
 
     print_to_serial("Kernel start page: ");
     print_hex_to_serial(kernel_start_page);
@@ -185,26 +133,18 @@ void kernel_main(kernel_info* kernel_info){
     init_task_scheduler();
     int64 idx=add_task(usercode,4096,0);
     tasks[idx].state=RUNNING;
-    //print_to_serial("Tasks: ");
-    //print_hex_to_serial((uint64)tasks);
-    //print_to_serial("\n\r");
-    //print_to_serial("idx: ");
-    //print_signed_to_serial(idx);
-    //print_to_serial("\n\r");
-    //print_to_serial("tasks[1].pml4: ");
-    //print_hex_to_serial((uint64)(tasks[idx].pml4));
-    //print_to_serial("\n\r");
-    //print_to_serial("&current_state: ");
-    //print_hex_to_serial((uint64)(&current_state));
-    //print_to_serial("\n\r");
-    //idx=add_task(usercode,4096,0);
-    //tasks[idx].state=RUNNING;
+    //asm("cli")
+    //print_to_serial("Before init devices\n\r");
+    init_devices((RSDPDescriptor20*)rsdp2_address);
+    //print_to_serial("After init devices\n\r");
+
     start_task_scheduler();
 
     //init_video();
     //draw_rectangle(0,0,100,100,torgb(255,0,0));
     //framebuffer[800*600-1]=torgb(255,0,0);
-
+    //print_to_serial("End\n\r");
+    //print_to_serial("After init devices\n\r");*/
     while(1);
 }
 
@@ -217,7 +157,7 @@ void usercode(){
         if(letter>'Z')letter='A';
         //asm volatile("outb %0, %1" : : "a" (letter), "Nd" (SERIAL_PORT));
         //asm volatile("cli");
-        syscall_wrapper(SYSCALL_IO,SYSCALL_IO_SERIAL,SYSCALL_IO_WRITE_STRING,string,0,0);
+        syscall_wrapper(SYSCALL_IO,SYSCALL_IO_SERIAL,SYSCALL_IO_WRITE_STRING,(uint64)string,0,0);
         letter++;
         for(uint64 i=0;i<50000*5000;i++)asm("NOP");
     }
@@ -231,4 +171,13 @@ void usercode2(){
         letter--;
         for(uint64 i=0;i<50000*5000;i++)asm("NOP");
     }
+}
+
+void kernel_panic(char* error){
+    task_scheduler_running=0;
+    asm("cli");
+    print_to_serial("!!!Kernel panic!!!\n\r");
+    print_to_serial("Error: ");
+    print_to_serial(error);
+    while1();
 }

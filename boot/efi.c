@@ -2,70 +2,410 @@
 #include <efilib.h>
 #include <grp.h>
 #include <types.h>
-#include "gdt.h" //From https://blog.llandsmeer.com/tech/2019/07/21/uefi-x64-userland.html
-#define KEYBOARD_PORT 0x60
-#define SERIAL_PORT 0x3F8 
+#include "gdt.h" //From partly from https://blog.llandsmeer.com/tech/2019/07/21/uefi-x64-userland.html
+#include "../config/config.h"
 
-/* bitflags */
-#define PAGE_BIT_P_PRESENT (1<<0)
-#define PAGE_BIT_RW_WRITABLE (1<<1)
-#define PAGE_BIT_US_USER (1<<2)
-#define PAGE_XD_NX (1<<63)
-
-/* bit mask for page aligned 52-bit address */
-#define PAGE_ADDR_MASK 0x000ffffffffff000
-
-/* these get updated when a page is accessed/written to */
-#define PAGE_BIT_A_ACCESSED (1<<5)
-#define PAGE_BIT_D_DIRTY (1<<6)
-
-#define KERNEL_START_PDPT 4
-#define KERNEL_START_PD 0
-#define KERNEL_START_PT 0
-/*#define KERNEL_START_P 0*/
-
-extern void load_gdt(struct table_ptr * gdt_ptr);
+// Functions
+void crit_error(CHAR16* message);
+EFI_FILE_HANDLE GetVolume(EFI_HANDLE image);
+EFI_STATUS load_file(EFI_FILE_HANDLE handle, CHAR16* file_name, void** pool, uint64* file_size);
+void* alloc_page(uint64 n);
+uint64 FileSize(EFI_FILE_HANDLE FileHandle);
+uint64 sqrt(uint64 n);
+void inc_pmap_vars(uint64* pdpt, uint64* pd, uint64* pt, uint64* page, uint64**** pml4, uint64 flags);
+void map_page(uint64 pdpt, uint64 pd, uint64 pt, uint64 page, uint64 phys_page, uint64**** pml4, uint64 flags);
+extern void load_gdt(void* gdp_ptr);
 extern void load_pml4(void* pml4);
-extern void jmp_to_kernel(void* stack, void* address, void* kernel_info);
+extern void jmp_to_kernel(void* kernel_stack_vma, void* kernel_virt_addr, void* kernel_info_vma);
+void outb(uint16 port, uint8 data);
+void int_to_text_hex(uint64 n, char *string);
+void int_to_text(uint64 n, uint8 string[]);
+void print_hex_to_serial(uint64 n);
+void print_to_serial(char *buf);
+void print_int_to_serial(uint64 n);
 
-UINT64 FileSize(EFI_FILE_HANDLE FileHandle)
-{
-  UINT64 ret;
-  EFI_FILE_INFO       *FileInfo;         /* file information structure */
-  /* get the file's size */
-  FileInfo = LibFileInfo(FileHandle);
-  ret = FileInfo->FileSize;
-  FreePool(FileInfo);
-  return ret;
+// Structs
+typedef volatile struct rgb{
+    uint8 r;
+    uint8 g;
+    uint8 b;
+} rgb;
+typedef struct{
+    uint64 real_address;
+    uint64 frame_buffer;
+    uint64 screen_width;
+    uint64 screen_height;
+    uint64 kernel_pml4_addresss;
+    EFI_MEMORY_DESCRIPTOR* memmap;
+    uint64 memmap_desc_count;
+    uint64 memmap_desc_size;
+    uint64 largest_area_idx;
+    uint64 used_pages;
+    void* gdt;
+    void* tss;
+    uint64 kernel_next_page;
+    uint64 acpi_rsdp;
+    uint64 io_space_used_pages;
+} kernel_info;
+
+
+// Global vars
+void* largest_memory_part;
+uint64 largest_memory_part_size; // pages
+uint64 largest_memory_part_idx;
+uint64 used_pages = 0;
+uint64 sqrt_iter_count=1;
+uint64**** pml4 = NULL;
+EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
+char hexletters[]="0123456789ABCDEF";
+uint64 io_space_used_pages = 0;
+
+EFI_STATUS EFIAPI efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+    InitializeLib(ImageHandle, SystemTable);
+    uefi_call_wrapper(SystemTable->BootServices->SetWatchdogTimer,4,0,0,0,NULL);
+
+    EFI_STATUS status;
+
+    // Getting root directory handle
+    EFI_FILE_HANDLE volume = GetVolume(ImageHandle);
+    // Loading necessary files
+    void* rawlogo;
+    uint64 rawlogo_file_size;
+    load_file(volume,L"rawlogo.bin",&rawlogo,&rawlogo_file_size);
+
+    void* kernel_binary;
+    uint64 kernel_binary_size;
+    load_file(volume,L"kernel.bin",&kernel_binary,&kernel_binary_size);
+
+    // Initializing screen
+    EFI_GRAPHICS_OUTPUT_PROTOCOL* gop;
+    status=uefi_call_wrapper(BS->LocateProtocol,3,&gop_guid,NULL,(void**)&gop);
+    if(EFI_ERROR(status)){
+        crit_error(L"GOP not found.");
+    }
+
+    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION* gop_info;
+    uint64 gop_info_size = 0;
+    uint64 gop_mode_count = 0;
+    uint64 native_mode = 0;
+    uint64 width = 0;
+    uint64 height = 0;
+    uint32* framebuffer = NULL;
+    uint64 framebuffer_size = 0;
+
+    status=uefi_call_wrapper(gop->QueryMode,4,gop,(gop->Mode==NULL ? 0 : gop->Mode->Mode), &gop_info_size, &gop_info);
+    if(status==EFI_NOT_STARTED){
+        status=uefi_call_wrapper(gop->SetMode,2,gop,0);
+    }
+    if(EFI_ERROR(status)){
+        crit_error(L"Unable to initialize screen.");
+    }
+    gop_mode_count=gop->Mode->MaxMode;
+    native_mode=gop->Mode->Mode;
+
+    status=uefi_call_wrapper(gop->QueryMode,4,gop,native_mode,&gop_info_size,&gop_info);
+    if(EFI_ERROR(status)){
+        crit_error(L"Unable to extract screen info");
+    }
+    framebuffer=(uint32*)(gop->Mode->FrameBufferBase);
+    framebuffer_size=gop->Mode->FrameBufferSize;
+    width = gop_info->HorizontalResolution;
+    height = gop_info->VerticalResolution;
+    #if(EFI_DEBUG)
+        Print(L"Resolution: %dx%d; Pixel format: %d, Framebuffer: 0x%x\n\r",gop_info->HorizontalResolution,gop_info->VerticalResolution,gop_info->PixelFormat,framebuffer);
+        Print(L"GDT address: 0x%x\n\r", &gdt_table);
+    #endif
+
+    // Getting the acpi rsdp
+    EFI_GUID acpi_guid = ACPI_20_TABLE_GUID;//{0x8868e871,0xe4f1,0x11d3,0xbc,0x22,0x80,0xc7,0x3c,0x88,0x81};
+
+    #if(EFI_DEBUG)
+        Print(L"Number of UEFI system table entries: %d\n\r", SystemTable->NumberOfTableEntries);
+        Print(L"System table entries: \n\r");
+    #endif
+    uint64 acpi_rsdp_addr;
+    for(uint32 i=0;i<SystemTable->NumberOfTableEntries;i++){
+        #if(EFI_DEBUG)
+            Print(L"#%d GUID: %x-%x-%x-%x-00",
+                i,
+                SystemTable->ConfigurationTable[i].VendorGuid.Data1,
+                SystemTable->ConfigurationTable[i].VendorGuid.Data2,
+                SystemTable->ConfigurationTable[i].VendorGuid.Data3,
+                SystemTable->ConfigurationTable[i].VendorGuid.Data4[0]<<8 | SystemTable->ConfigurationTable[i].VendorGuid.Data4[1]                    
+            );
+            for (uint8 j=0;j<6;j++){
+                Print(L"%x",
+                    SystemTable->ConfigurationTable[i].VendorGuid.Data4[2+j]
+                );
+            }
+            Print(L"; Pointer: 0x%x;",
+                SystemTable->ConfigurationTable[i].VendorTable
+            );
+        #endif
+        if(CompareGuid(&(SystemTable->ConfigurationTable[i].VendorGuid),&acpi_guid)==0){
+            #if(EFI_DEBUG)
+                Print(L" ACPI root table;");
+            #endif
+            acpi_rsdp_addr=(uint64)(SystemTable->ConfigurationTable[i].VendorTable);
+        }
+        #if(EFI_DEBUG)
+            Print(L"\n\r");
+        #endif
+    }
+
+    // Getting the memory map
+    uint64 mem_map_size = 100;
+    uint64 mem_map_size_out=mem_map_size;
+    EFI_MEMORY_DESCRIPTOR* buffer;
+    uint64 mem_map_desc_size;
+    uint64 mem_map_key;
+    uint32 mem_map_version;
+    uint64 mem_map_desc_count;
+    uint64 ram_amount;
+
+    do{
+        buffer=AllocatePool(mem_map_size);
+        if(buffer==NULL)break;
+        status=uefi_call_wrapper(SystemTable->BootServices->GetMemoryMap,5,
+            &mem_map_size_out,
+            buffer,
+            &mem_map_key,
+            &mem_map_desc_size,
+            &mem_map_version
+        );
+        if(EFI_ERROR(status)){
+            FreePool(buffer);
+            mem_map_size+=100;
+        }
+    }while(status!=EFI_SUCCESS);
+    
+    if(buffer==NULL){
+        crit_error(L"Failed to retrieve the memory map");
+    }
+
+    mem_map_desc_count=mem_map_size_out / mem_map_desc_size;
+    #if(EFI_DEBUG)
+        Print(L"Memory map size: %u, Memory map descriptor size: %u, Desc count: %u\n\r",mem_map_size_out,mem_map_desc_size,mem_map_desc_count);
+    #endif
+    largest_memory_part_size=0;
+    EFI_MEMORY_DESCRIPTOR* mem_desc = buffer;
+    for(uint32 i=0;i<mem_map_desc_count;i++){
+        #if(EFI_DEBUG)
+        Print(L"Type: %d PhsyicalStart: %lx VirtualStart: %lx NumberofPages: %d Attribute %lx\n",
+            mem_desc->Type, mem_desc->PhysicalStart,
+            mem_desc->VirtualStart, mem_desc->NumberOfPages,
+            mem_desc->Attribute);
+        #endif
+        if(mem_desc->NumberOfPages > largest_memory_part_size && mem_desc->Type==EfiConventionalMemory){
+            largest_memory_part_size = mem_desc->NumberOfPages;
+            largest_memory_part = (void*) (mem_desc->PhysicalStart);
+            largest_memory_part_idx=i;
+        }
+        ram_amount=mem_desc->PhysicalStart+((mem_desc->NumberOfPages)<<12);
+        mem_desc= (EFI_MEMORY_DESCRIPTOR*)((uint64)mem_desc + mem_map_desc_size);
+    }
+
+    EFI_MEMORY_DESCRIPTOR* memmap = alloc_page((mem_map_size_out >> 12) + 1);
+    for(uint32 i=0;i<mem_map_size_out;i++)((uint8*)memmap)[i]=((uint8*)buffer)[i];
+    FreePool(buffer);
+
+    #if(EFI_DEBUG)
+        Print(L"Ram amount: %u MB\n\r",ram_amount >> 20);
+    #endif
+
+    // Draw the logo
+    uint32 logo_width = ((uint32*)rawlogo)[0];
+    uint32 logo_height = ((uint32*)rawlogo)[1];
+
+    uint32 startx=width/2-logo_width/2;
+    uint32 starty=height/2-logo_height/2;
+    uint32 centerx=width/2;
+    uint32 centery=height/2;
+    uint32 distance=0;
+    uint32 maxdistance=sqrt(centerx*centerx+centery*centery);
+    const uint8 gradient_start=0x24;
+
+    rgb *pixel=(rgb*)(rawlogo+8);
+
+    for(uint32 y=0;y<height;y++)for(uint32 x=0;x<width;x++){
+        distance=sqrt((x-centerx)*(x-centerx) + (y-centery)*(y-centery));
+        uint8 tmp=gradient_start-(uint8)((distance*gradient_start)/maxdistance);
+        framebuffer[y*width + x]=tmp | (tmp << 8) | (tmp << 16);
+    }
+    for(uint32 y=0;y<logo_height;y++){
+        for(uint32 x=0;x<logo_width;x++){
+            framebuffer[(starty + y)*width + startx + x]= ((uint32)pixel->r << 16) | (((uint32)pixel->g) << 8) | (((uint32)pixel->b)); //(*(uint32*)pixel) & 0x00ffffff;
+            pixel++;
+        }
+    }
+
+    // Creating the page table
+    // Identity mapping the memory
+    uint64 pdpt_index=0;
+    uint64 pd_index=0;
+    uint64 pt_index=0;
+    uint64 page_index=0;
+    uint64 flags=0b011; // bit0: present, bit1: read/write, bit2: clear: supervisor only
+    uint64 page_count = ram_amount >> 12;
+
+    pml4=alloc_page(1);
+    #if(EFI_DEBUG)
+        Print(L"PML4 address: 0x%x\n\r",(uint64)pml4);
+    #endif
+
+    for(uint64 i=0;i<page_count;i++){
+        map_page(pdpt_index,pd_index,pt_index,page_index,i,pml4,flags);
+        inc_pmap_vars(&pdpt_index,&pd_index,&pt_index,&page_index,pml4,flags);
+    }
+
+    // Creating the kernel address space
+    pdpt_index=KERNEL_VMA_PDPT;
+    pd_index=KERNEL_BINARY_PD;
+    pt_index=0;
+    page_index=0;
+    flags=0b011; // bit0: present, bit1: read/write, bit2: clear: supervisor only
+
+    // Copying the kernel binary to an allocated space at a page boundary
+    uint32 kernel_binary_size_page = (kernel_binary_size >> 12) + 1;
+    void* kernel=alloc_page(kernel_binary_size_page);
+    for(uint32 i=0;i<kernel_binary_size;i++){
+        ((uint8*)kernel)[i]=((uint8*)kernel_binary)[i];
+    }
+
+    uint64 kernel_start_pageframe=((uint64)kernel) >> 12;
+    
+    for(uint32 i=0;i<kernel_binary_size_page;i++){
+        map_page(pdpt_index,pd_index,pt_index,page_index,kernel_start_pageframe + i,pml4,flags);
+        inc_pmap_vars(&pdpt_index,&pd_index,&pt_index,&page_index,pml4,flags);
+    }
+
+    // Kernel info
+    pd_index=KERNEL_INFO_START_PD;
+    pt_index=0;
+    page_index=0;
+
+    uint32 kernel_info_size_page=(sizeof(kernel_info) >> 12) + 1;
+    kernel_info* kernel_info_pointer = alloc_page(kernel_info_size_page);
+
+    for(uint32 i=0;i<kernel_info_size_page;i++){
+        map_page(pdpt_index,pd_index,pt_index,page_index,((uint64)kernel_info_pointer >> 12) + i,pml4,flags);
+        inc_pmap_vars(&pdpt_index,&pd_index,&pt_index,&page_index,pml4,flags);
+    }
+
+    // Secondary kernel stack
+    pd_index=KERNEL_SECONDARY_STACK_START_PD;
+    pt_index=0;
+    page_index=0;
+    
+    void* kernel_secondary_stack = alloc_page(KERNEL_SECONDARY_STACK_SIZE);
+    uint64 kernel_secondary_stack_start_pageframe = (uint64)kernel_secondary_stack >> 12;
+    for(uint32 i=0;i<KERNEL_SECONDARY_STACK_SIZE;i++){
+        map_page(pdpt_index,pd_index,pt_index,page_index,kernel_secondary_stack_start_pageframe + i,pml4,flags);
+        inc_pmap_vars(&pdpt_index,&pd_index,&pt_index,&page_index,pml4,flags);
+    }
+
+    // Kernel stack
+    pd_index=KERNEL_STACK_START_PD;
+    pt_index=0;
+    page_index=0;
+    
+    void* kernel_stack = alloc_page(KERNEL_STACK_SIZE);
+    uint64 kernel_stack_start_pageframe = (uint64)kernel_stack >> 12;
+    for(uint32 i=0;i<KERNEL_STACK_SIZE;i++){
+        map_page(pdpt_index,pd_index,pt_index,page_index,kernel_stack_start_pageframe + i,pml4,flags);
+        inc_pmap_vars(&pdpt_index,&pd_index,&pt_index,&page_index,pml4,flags);
+    }
+
+    // Kernel heap
+    pd_index=KERNEL_HEAP_START_PD;
+    pt_index=0;
+    page_index=0;
+
+    void* kernel_heap=alloc_page(KERNEL_HEAP_SIZE);
+    uint64 kernel_heap_start_pageframe=(uint64)kernel_heap >> 12;
+    for(uint32 i=0;i<KERNEL_HEAP_SIZE;i++){
+        map_page(pdpt_index,pd_index,pt_index,page_index,kernel_heap_start_pageframe + i,pml4,flags);
+        inc_pmap_vars(&pdpt_index,&pd_index,&pt_index,&page_index,pml4,flags);
+    }
+
+    //Framebuffer
+
+    pdpt_index=MEMORY_IO_PDPT;
+    pd_index=(io_space_used_pages>>18) & 511;
+    pt_index=(io_space_used_pages>>9) & 511;
+    page_index=io_space_used_pages & 511;
+    void* framebuffer_vma = (void*)((MEMORY_IO_PDPT << 39) + io_space_used_pages);
+    uint64 framebuffer_size_page=framebuffer_size >> 12;
+    uint64 framebuffer_start_pageframe=(uint64)framebuffer >> 12;
+    io_space_used_pages+=framebuffer_size_page;
+    for(uint64 i=0;i<framebuffer_size_page;i++){
+        map_page(pdpt_index,pd_index,pt_index,page_index,framebuffer_start_pageframe + i,pml4,flags);
+        inc_pmap_vars(&pdpt_index,&pd_index,&pt_index,&page_index,pml4,flags);
+    }
+
+    // Exiting boot services
+    uefi_call_wrapper(BS->ExitBootServices,2,ImageHandle,mem_map_key);
+    asm("cli");
+
+    // Creating and loading the gdt
+    for(uint32 i=0;i<sizeof(tss);i++){
+        ((uint8*)&tss)[i]=0;
+    }
+    uint64 tss_base=(uint64)&tss;
+    gdt_table.tss_low.base15_0 = tss_base & 0xffff;
+    gdt_table.tss_low.base23_16 = (tss_base >> 16) & 0xff;
+    gdt_table.tss_low.base31_24 = (tss_base >> 24) & 0xff;
+    gdt_table.tss_low.limit15_0 = sizeof(tss);
+    gdt_table.tss_high.limit15_0 = (tss_base >> 32) & 0xffff;
+    gdt_table.tss_high.base15_0 = (tss_base >> 48) & 0xffff;
+    tss.iopb_offset=sizeof(tss);
+
+    struct table_ptr gdt_ptr = { sizeof(gdt_table)-1, (uint64)&gdt_table };
+    load_gdt(&gdt_ptr);
+
+    // Loading the pml4
+    load_pml4(pml4);
+
+
+    // Filling out the kernel_info data
+    kernel_info* kernel_info_vma=(kernel_info*)((KERNEL_VMA_PDPT << 39) | (KERNEL_INFO_START_PD << 30));
+    void* kernel_stack_vma=(void*)((KERNEL_VMA_PDPT << 39) | (KERNEL_STACK_START_PD << 30));
+    void* kernel_stack_top_vma=(void*)((KERNEL_VMA_PDPT << 39) | (KERNEL_STACK_START_PD << 30)) + (KERNEL_STACK_SIZE << 12)-8;
+    void* kernel_vma=(void*)((KERNEL_VMA_PDPT << 39) | (KERNEL_BINARY_PD << 30));
+
+    kernel_info_vma->frame_buffer=(uint64)framebuffer_vma;
+    kernel_info_vma->kernel_pml4_addresss=(uint64)pml4;
+    kernel_info_vma->screen_width=(uint64)width;
+    kernel_info_vma->screen_height=(uint64)height;
+    kernel_info_vma->real_address=(uint64)kernel;
+    kernel_info_vma->largest_area_idx=largest_memory_part_idx;
+    kernel_info_vma->memmap_desc_size=mem_map_desc_size;
+    kernel_info_vma->memmap_desc_count=mem_map_desc_count;
+    kernel_info_vma->memmap=memmap;
+    kernel_info_vma->used_pages=used_pages;
+    kernel_info_vma->gdt=&gdt_table;
+    kernel_info_vma->tss=&tss;
+    kernel_info_vma->acpi_rsdp=acpi_rsdp_addr;
+    kernel_info_vma->io_space_used_pages=io_space_used_pages;
+
+    #if(EFI_DEBUG)
+        print_to_serial("Kernel_vma: ");
+        print_hex_to_serial((uint64)kernel_vma);
+        print_to_serial("\n\rKernel_stack_vma: ");
+        print_hex_to_serial((uint64)kernel_stack_vma);
+        print_to_serial("\n\r");
+    #endif
+
+    jmp_to_kernel(kernel_stack_top_vma,kernel_vma,kernel_info_vma);
+
+    while(1);
 }
-uint8 inb(uint16 port){
-    uint8 ret;
-    asm volatile("inb %1, %0" : "=a"(ret) : "d"(port));
-    return ret;
+
+void crit_error(CHAR16* message){
+    Print(message);
+    while(1);
 }
-uint16 inb16(uint16 port){
-    uint16 ret;
-    __asm__ volatile("inw %1, %0" : "=a" (ret) : "Nd" (port));
-    return ret;
-}
-uint32 inb32(uint16 port){
-    uint32 ret = 0;
-    asm volatile("inl %1, %0" : "=a"(ret) : "d"(port));
-    return ret;
-}
-void outb(uint16 port, uint8 data)
-{
-  asm volatile("outb %0, %1" : : "a" (data), "Nd" (port));
-  return;
-}
-void outb16(uint16 port, uint16 data)
-{
-  asm volatile("outw %0, %1" : : "a" (data), "Nd" (port));
-  return;
-}
-void outb32(uint16 port, uint32 data){
-    asm volatile("outl %0, %1" : : "a"(data), "Nd" (port));
-}
+
 EFI_FILE_HANDLE GetVolume(EFI_HANDLE image) //From osdev
 {
     EFI_LOADED_IMAGE *loaded_image = NULL;                  /* image interface */
@@ -80,6 +420,139 @@ EFI_FILE_HANDLE GetVolume(EFI_HANDLE image) //From osdev
     uefi_call_wrapper(BS->HandleProtocol, 3, loaded_image->DeviceHandle, &fsGuid, (VOID*)&IOVolume);
     uefi_call_wrapper(IOVolume->OpenVolume, 2, IOVolume, &Volume);
     return Volume;
+}
+
+EFI_STATUS load_file(EFI_FILE_HANDLE handle, CHAR16* file_name, void** pool, uint64* file_size){
+    EFI_FILE_HANDLE file;
+    EFI_STATUS status = uefi_call_wrapper(handle->Open,5,handle,&file,file_name,EFI_FILE_MODE_READ,EFI_FILE_READ_ONLY);
+    *file_size = FileSize(file);
+    *pool = AllocatePool(*file_size);
+    uefi_call_wrapper(file->Read, 3, file, file_size, *pool);
+    uefi_call_wrapper(file->Close, 1, file);
+}
+
+void* alloc_page(uint64 n){
+    if(used_pages+n<largest_memory_part_size){
+        void* return_addr=(void*)((uint64)largest_memory_part+used_pages*4096);
+        for(uint64 i=(uint64)return_addr;i<(uint64)return_addr+n*4096;i++){*(uint8*)i=0;}
+        used_pages+=n;
+        return return_addr;
+    }else{
+        crit_error(L"Out of memory");
+    }
+}
+
+uint64 FileSize(EFI_FILE_HANDLE FileHandle)
+{
+  uint64 ret;
+  EFI_FILE_INFO       *FileInfo;         /* file information structure */
+  /* get the file's size */
+  FileInfo = LibFileInfo(FileHandle);
+  ret = FileInfo->FileSize;
+  FreePool(FileInfo);
+  return ret;
+}
+
+uint64 sqrt(uint64 n){
+  uint64 lo = 0, hi = n, mid;
+  for(uint64 i = 0 ; i < sqrt_iter_count ; i++){
+      mid = (lo+hi)>>1;
+      if(mid*mid == n) return mid;
+      if(mid*mid > n) hi = mid;
+      else lo = mid;
+  }
+  return mid;
+}
+
+void map_page(uint64 pdpt, uint64 pd, uint64 pt, uint64 page, uint64 phys_page, uint64**** pml4, uint64 flags){
+    //((uint64*)(((uint64)((uint64*)((uint64)(((uint64*)((uint64)pml4[pdpt] & PAGE_ADDR_MASK))[pd])& PAGE_ADDR_MASK)) [pt]) & PAGE_ADDR_MASK))[virt_page_in_pt] = (phys_page << 12) | flags;
+    uint64* pdpt_pointer=(uint64*)((uint64)(pml4[pdpt]) & PAGE_ADDR_MASK);
+    if(pdpt_pointer==NULL){
+        pdpt_pointer=alloc_page(1);
+        pml4[pdpt]=(uint64***)((uint64)pdpt_pointer | flags);
+    }
+    uint64* pd_pointer=(uint64*)((uint64)(pdpt_pointer[pd]) & PAGE_ADDR_MASK);
+    if(pd_pointer==NULL){
+        pd_pointer=alloc_page(1);
+        pdpt_pointer[pd]=(uint64)pd_pointer | flags;
+    }
+    uint64* pt_pointer=(uint64*)((uint64)(pd_pointer[pt]) & PAGE_ADDR_MASK);
+    if(pt_pointer==NULL){
+        pt_pointer=alloc_page(1);
+        pd_pointer[pt]=(uint64)pt_pointer | flags;
+    }
+    pt_pointer[page]=(phys_page << 12) | flags;
+}
+
+void inc_pmap_vars(uint64* pdpt, uint64* pd, uint64* pt, uint64* page, uint64**** pml4, uint64 flags){
+    (*page)++;
+    if(*page==512){
+        #if(EFI_DEBUG)
+            Print(L"Pagemap: pdpt: %u, pd: %u, pt: %u, page: %u\n\r",
+                *pdpt,
+                *pd,
+                *pt,
+                *page
+            );
+        #endif
+        (*page)=0;
+        (*pt)++;
+        if(*pt==512){
+            (*pt)=0;
+            (*pd)++;
+            if(*pd==512){
+                (*pd)=0;
+                (*pdpt)++;
+            }
+        }
+    }
+    /*if(*page==512){
+        (*page)=0;
+        (*pt)++;
+        if(*pt!=512){
+            ((uint64*)((uint64)(((uint64*)((uint64)pml4[*pdpt] & PAGE_ADDR_MASK))[*pd])& PAGE_ADDR_MASK)) [*pt]=(uint64)alloc_page(1) | flags;
+        }else{
+            (*pd)++;
+            (*pt)=0;
+            if(*pd!=512){
+                ((uint64*)((uint64)pml4[*pdpt] & PAGE_ADDR_MASK))[*pd]=(uint64)((uint64)alloc_page(1) | flags);
+                ((uint64*)((uint64)(((uint64*)((uint64)pml4[*pdpt] & PAGE_ADDR_MASK))[*pd])& PAGE_ADDR_MASK)) [*pt]=(uint64)((uint64)alloc_page(1) | flags);
+            }
+            else {
+                (*pdpt)++;
+                (*pd)=0;
+                pml4[*pdpt]=(uint64***)((uint64)alloc_page(1) | flags);
+                ((uint64*)((uint64)pml4[*pdpt] & PAGE_ADDR_MASK))[*pd]=(uint64)alloc_page(1) | flags;
+                ((uint64*)((uint64)(((uint64*)((uint64)pml4[*pdpt] & PAGE_ADDR_MASK))[*pd])& PAGE_ADDR_MASK)) [*pt]=(uint64)((uint64)alloc_page(1) | flags);
+            }
+        }
+    }*/
+}
+
+void outb(uint16 port, uint8 data)
+{
+    asm volatile("outb %0, %1" : : "a" (data), "Nd" (port));
+    return;
+}
+
+void int_to_text_hex(uint64 n, char *string){
+    uint64 div=n;
+    uint8 index=0;
+    if(div==0){
+        string[0]='0';
+        return;
+    }
+    char buffer[21];
+    while (div>0){
+        buffer[index]=*(hexletters+div%16);
+        div=(uint64)div/16;
+        index++;
+    }
+    for(uint8 i=0;i<21;i++){string[i]=0;}
+    for(uint8 i=0;i<index;i++){
+        string[i]=buffer[index-i-1];
+    }
+    return;
 }
 void int_to_text(uint64 n, uint8 string[]){
     uint64 div=n;
@@ -100,541 +573,25 @@ void int_to_text(uint64 n, uint8 string[]){
     }
     return;
 }
-void getMemoryMap();
-volatile typedef struct{
-    uint16 length;
-    uint64 address;
-} GDTPointer;
 
-volatile uint8 GDT[]={
-    //Null
-    0xFF,0xFF,  //limit
-    0, 0,       //base (Low)
-    0,          //base (Middle)
-    0,          //Access
-    1,          //Granuality
-    0,          //Base (High)
-    //Code
-    0, 0,       //Limit
-    0, 0,       //Base (Low)
-    0,          //Base (Middle)
-    0b10011010, //Access
-    0b10101111, //Granuality, 64bits flag, limit 19:16
-    0,          //Base (High)
-    //Data
-    0, 0,       //Limit
-    0, 0,       //Base (Low)
-    0,          //Base (Middle)
-    0b10010010, //Access
-    0b00000000, //Granuality, 64bits flag, limit 19:16
-    0,          //Base (High)
-};
-
-typedef struct{
-    uint8 r;
-    uint8 g;
-    uint8 b;
-} rgb;
-
-typedef struct{
-    uint64 real_address;
-    uint64 frame_buffer;
-    uint64 screen_width;
-    uint64 screen_height;
-    uint64 kernel_pml4_addresss;
-    EFI_MEMORY_DESCRIPTOR* memmap;
-    uint64 memmap_desc_count;
-    uint64 memmap_desc_size;
-    uint64 largest_area_idx;
-    uint64 used_pages;
-    void* gdt;
-    void* tss;
-    uint64 kernel_next_page;
-    uint64 acpi_rsdp;
-    
-} kernel_info;
-
-GDTPointer GDTDesc;
-
-__attribute__((aligned(4096)))
-uint64*** kernel_pml4[512];
-
-uint32* framebuffer;
-uint32 width=0;
-uint32 height=0;
-
-uint64 best_memory_part_base=0;
-uint64 best_memory_part_length=0;
-uint64 page_idx=0;
-uint64 ram_amount=0;
-
-/*__attribute__((aligned(4096)))
-uint64 pml4[512];*/
-
-void* alloc_page(uint64 n){
-    if(page_idx+n<best_memory_part_length){
-        void* return_addr=(void*)(best_memory_part_base+page_idx*4096);
-        for(uint64 i=(uint64)return_addr;i<(uint64)return_addr+n*4096;i++){*(uint8*)i=0;}
-        page_idx+=n;
-        return return_addr;
-    }else return (void*)0;
+void print_hex_to_serial(uint64 n){
+    char buf[30];
+    for(uint8 i=0;i<30;i++)buf[i]=0;
+    buf[0]='0';
+    buf[1]='x';
+    int_to_text_hex(n,buf+2);
+    print_to_serial(buf);
 }
-
-EFI_STATUS
-EFIAPI
-efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) //Mostly from osdev
-{
-    InitializeLib(ImageHandle, SystemTable);
-    SystemTable->BootServices->SetWatchdogTimer(0, 0, 0, NULL);
-
-    EFI_LOADED_IMAGE *loaded_image = NULL;
-    EFI_STATUS s;
- 
-    s = uefi_call_wrapper(SystemTable->BootServices->HandleProtocol,
-                               3,
-                              ImageHandle,
-                              &LoadedImageProtocol,
-                              (void **)&loaded_image);
-    if (EFI_ERROR(s)) {
-        Print(L"handleprotocol: %r\n", s);
+void print_to_serial(char *buf){
+    uint64 i=0;
+    while(buf[i]!=0){
+        outb(SERIAL_PORT,buf[i]);
+        i++;
     }
- 
-    Print(L"Image base: 0x%lx\n", loaded_image->ImageBase);
-
-    EFI_GUID gopGuid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
-    EFI_GRAPHICS_OUTPUT_PROTOCOL *gop;
-    EFI_STATUS status = uefi_call_wrapper(BS->LocateProtocol, 3, &gopGuid, NULL, (void**)&gop);
-    if(EFI_ERROR(status))Print(L"GOP not found");
-    else{
-        EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
-        UINTN SizeOfInfo, numModes, nativeMode;
-        
-        status = uefi_call_wrapper(gop->QueryMode, 4, gop, gop->Mode==NULL?0:gop->Mode->Mode, &SizeOfInfo, &info);
-        // this is needed to get the current video mode
-        if (status == EFI_NOT_STARTED)
-            status = uefi_call_wrapper(gop->SetMode, 2, gop, 0);
-        if(EFI_ERROR(status)) {
-            Print(L"Unable to get native mode");
-        } else {
-            nativeMode = gop->Mode->Mode;
-            numModes = gop->Mode->MaxMode;
-            status = uefi_call_wrapper(gop->QueryMode, 4, gop, nativeMode, &SizeOfInfo, &info);
-            Print(L"Native mode: %03d width %d height %d format %x%s\n",
-                nativeMode,
-                info->HorizontalResolution,
-                info->VerticalResolution,
-                info->PixelFormat
-            );
-            Print(L"Framebuffer address %x size %d, width %d height %d pixelsperline %d \n",
-                gop->Mode->FrameBufferBase,
-                gop->Mode->FrameBufferSize,
-                gop->Mode->Info->HorizontalResolution,
-                gop->Mode->Info->VerticalResolution,
-                gop->Mode->Info->PixelsPerScanLine
-            );
-            framebuffer=(uint32*)gop->Mode->FrameBufferBase;
-            width=gop->Mode->Info->HorizontalResolution;
-            height=gop->Mode->Info->VerticalResolution;
-
-            EFI_FILE_HANDLE Volume = GetVolume(ImageHandle);
-            //uint16 file_name[]=;
-            CHAR16 *FileName=L"rawlogo.bin";
-            EFI_FILE_HANDLE logofile;
-            EFI_STATUS status = uefi_call_wrapper(Volume->Open, 5, Volume, &logofile, FileName, EFI_FILE_MODE_READ, EFI_FILE_READ_ONLY);
-            if(status!=EFI_SUCCESS){
-                Print(L"Error, couldnt open logo file");
-                while(1);
-            }
-            uint64 logofilesize=FileSize(logofile);
-            Print(L"Logo size: %d\n",logofilesize);
-            uint8* rawlogo=AllocatePool(logofilesize);
-            uefi_call_wrapper(logofile->Read, 3, logofile, &logofilesize, rawlogo);
-            uefi_call_wrapper(logofile->Close, 1, logofile);
-
-            FileName=L"kernel.bin";
-            EFI_FILE_HANDLE kernelfile;
-            status = uefi_call_wrapper(Volume->Open, 5, Volume, &kernelfile, FileName, EFI_FILE_MODE_READ, EFI_FILE_READ_ONLY);
-            if(status!=EFI_SUCCESS){
-                Print(L"Error, couldn't open kernel.bin");
-                while(1);
-            }
-            uint64 kernelfilesize=FileSize(kernelfile);
-            uint8* kernel_file=AllocatePool(kernelfilesize);
-            uefi_call_wrapper(kernelfile->Read, 3, kernelfile, &kernelfilesize, kernel_file);
-            uefi_call_wrapper(kernelfile->Close, 1, kernelfile);
-
-            // Find ACPI information
-
-            EFI_GUID acpi_guid = {0x8868e871,0xe4f1,0x11d3,0xbc,0x22,0x80,0xc7,0x3c,0x88,0x81};
-
-            Print(L"Number of UEFI system table entries: %d\n\r", SystemTable->NumberOfTableEntries);
-            Print(L"System table entries: \n\r");
-            uint64 acpi_rsdp_addr;
-            for(uint32 i=0;i<SystemTable->NumberOfTableEntries;i++){
-                Print(L"#%d GUID: %x-%x-%x-%x-00",
-                    i,
-                    SystemTable->ConfigurationTable[i].VendorGuid.Data1,
-                    SystemTable->ConfigurationTable[i].VendorGuid.Data2,
-                    SystemTable->ConfigurationTable[i].VendorGuid.Data3,
-                    SystemTable->ConfigurationTable[i].VendorGuid.Data4[0]<<8 | SystemTable->ConfigurationTable[i].VendorGuid.Data4[1]                    
-                );
-                for (uint8 j=0;j<6;j++){
-                    Print(L"%x",
-                        SystemTable->ConfigurationTable[i].VendorGuid.Data4[2+j]
-                    );
-                }
-                Print(L"; Pointer: 0x%x;",
-                    SystemTable->ConfigurationTable[i].VendorTable
-                );
-                if(CompareGuid(&(SystemTable->ConfigurationTable[i].VendorGuid),&AcpiTableGuid)==0){
-                    Print(L" ACPI root table;");
-                    acpi_rsdp_addr=SystemTable->ConfigurationTable[i].VendorTable;
-                }
-                Print(L"\n\r");
-            }
-            
-            // Memory map, from some random website on the internet
-            status = EFI_SUCCESS;
-            UINTN MemMapSize = sizeof(EFI_MEMORY_DESCRIPTOR)*16;
-            UINTN MemMapSizeOut = MemMapSize;
-            UINTN MemMapKey = 0; UINTN MemMapDescriptorSize = 0;
-            UINT32 MemMapDescriptorVersion = 0;
-            UINTN DescriptorCount = 0;
-            UINTN i = 0;
-            uint8_t* buffer = NULL;
-            EFI_MEMORY_DESCRIPTOR* MemoryDescriptorPtr = NULL;
-            uint64 best_mem_part_idx;
-            EFI_MEMORY_DESCRIPTOR* memmap;
-
-            do 
-            {
-                buffer = AllocatePool(MemMapSize);
-                if ( buffer == NULL ) break;
-
-                status = uefi_call_wrapper(SystemTable->BootServices->GetMemoryMap,5,&MemMapSizeOut, (EFI_MEMORY_DESCRIPTOR*)buffer, 
-                    &MemMapKey, &MemMapDescriptorSize, &MemMapDescriptorVersion);
-
-                Print(L"MemoryMap: Status %x\n", status);
-                if ( status != EFI_SUCCESS )
-                {
-                    FreePool(buffer);
-                    MemMapSize += sizeof(EFI_MEMORY_DESCRIPTOR)*16;
-                }
-            } while ( status != EFI_SUCCESS );
-
-            if ( buffer != NULL )
-            {
-                DescriptorCount = MemMapSizeOut / MemMapDescriptorSize;
-                MemoryDescriptorPtr = (EFI_MEMORY_DESCRIPTOR*)buffer;
-                memmap=(EFI_MEMORY_DESCRIPTOR*)buffer;
-
-                Print(L"MemoryMap: DescriptorCount %d\n", DescriptorCount);
-
-                for ( i = 0; i < DescriptorCount; i++ )
-                {
-                    MemoryDescriptorPtr = (EFI_MEMORY_DESCRIPTOR*)(buffer + (i*MemMapDescriptorSize));
-                    Print(L"Type: %d PhsyicalStart: %lx VirtualStart: %lx NumberofPages: %d Attribute %lx\n",
-                        MemoryDescriptorPtr->Type, MemoryDescriptorPtr->PhysicalStart,
-                        MemoryDescriptorPtr->VirtualStart, MemoryDescriptorPtr->NumberOfPages,
-                        MemoryDescriptorPtr->Attribute);
-                    if(MemoryDescriptorPtr->Type==EfiConventionalMemory && MemoryDescriptorPtr->NumberOfPages>best_memory_part_length){
-                        best_memory_part_length=MemoryDescriptorPtr->NumberOfPages;
-                        best_memory_part_base=MemoryDescriptorPtr->PhysicalStart;
-                        best_mem_part_idx=i;
-                        //Print(L"Longer; physical start: 0x%x\n")
-                    }
-                    ram_amount=MemoryDescriptorPtr->PhysicalStart+(MemoryDescriptorPtr->NumberOfPages)*4096;
-                }
-                //EFI_MEMORY_DESCRIPTOR* last_descriptor = ((EFI_MEMORY_DESCRIPTOR*)buffer+(DescriptorCount-1)*MemMapDescriptorSize);
-                //FreePool(buffer);
-            }else{
-                Print(L"Error, buffer size is zero.");
-                while(1);
-            }
-
-            memmap=alloc_page(((MemMapSizeOut/4096)+1)*4096);
-            for(uint32 i=0;i<MemMapSizeOut;i++)((uint8*)memmap)[i]=buffer[i];
-
-            Print(L"Ram amount: %u MiB\n", ram_amount/(1024*1024));
-
-            Print(L"Longest memory start: 0x%lx, length: %d pages, amount: %d KiB\n", best_memory_part_base,best_memory_part_length, best_memory_part_length*4);
-            Print(L"Memory amount: %u MiB\n",ram_amount/(1024*1024));
-            Print(L"Kernel PML4 pointer: 0x%lx \n",kernel_pml4);
-            Print(L"Tss (Bootloader): 0x%x\n",(uint64)&tss);
-
-            uint32 logowidth = *(uint32*)rawlogo;
-            uint32 logoheight = ((uint32*)rawlogo)[1];
-
-            Print(L"Logowidth: %d, height: %d \n", logowidth, logoheight);
-
-            uint32 startx=width/2-logowidth/2;
-            uint32 starty=height/2-logoheight/2;
-
-            rgb *pixel=(rgb*)(rawlogo+8);
-
-            //Print(L"First pixel: R: %u, G: %u, B: %u \n",pixels[0].r,pixels[0].g,pixels[0].b);
-            for(uint64 i=0;i<width*height;i++)framebuffer[i]=0x00181818;
-
-            for(uint32 y=0;y<logoheight;y++){
-                for(uint32 x=0;x<logowidth;x++){
-                    framebuffer[starty*width + startx + y*width + x]=(uint32)(pixel->r)<<16 | (uint32)(pixel->g)<<8 | (uint32)(pixel->b);
-                    pixel++;
-                }
-            }
-
-
-            uefi_call_wrapper(BS->ExitBootServices,2,ImageHandle,MemMapKey);
-            asm("cli");
-            for(uint32 i=0;i<sizeof(tss);i++){
-                ((uint8*)&tss)[i]=0;
-            }
-            uint64 tss_base=(uint64)&tss;
-            gdt_table.tss_low.base15_0 = tss_base & 0xffff;
-            gdt_table.tss_low.base23_16 = (tss_base >> 16) & 0xff;
-            gdt_table.tss_low.base31_24 = (tss_base >> 24) & 0xff;
-            gdt_table.tss_low.limit15_0 = sizeof(tss);
-            gdt_table.tss_high.limit15_0 = (tss_base >> 32) & 0xffff;
-            gdt_table.tss_high.base15_0 = (tss_base >> 48) & 0xffff;
-            tss.iopb_offset=sizeof(tss);
-
-            struct table_ptr gdt_ptr = { sizeof(gdt_table)-1, (uint64)&gdt_table };
-            load_gdt(&gdt_ptr);
-
-            //kernel_pml4=alloc_page(1);
-            /*uint64 num_of_pages=ram_amount/4096;
-            uint64 num_of_page_tables=num_of_pages/512+1;
-            uint64 num_of_page_directories=num_of_page_tables/512+1;
-            uint64 num_of_page_dir_pointer_tables=num_of_page_tables/512+1;*/
-
-            uint64 pt_index=0;
-            uint64 pd_index=0;
-            uint64 pdpt_index=0;
-
-            uint64 flags=0b111; //flags: Present bit0; Read\Write bit1; User bit2;
-            uint64 no_page=ram_amount/4096;
-            //if(ram_amount<(uint64)framebuffer+width*height*4)no_page=((uint64)framebuffer+width*height*4)/4096;
-            kernel_pml4[pdpt_index]=(uint64***)((uint64)alloc_page(1) | flags);
-            /*kernel_pml4[pdpt_index][pd_index]=(uint64**)((uint64)alloc_page(1) | flags);
-            kernel_pml4[pdpt_index][pd_index][pt_index]=(uint64*)((uint64)alloc_page(1) | flags);*/
-            ((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)alloc_page(1) | flags;
-            ((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)alloc_page(1) | flags);
-
-            double lambdaw=(double)(logowidth+3)/(double)no_page*(double)4;
-            double lambdah=(double)(logoheight+3)/(double)no_page*(double)4;
-            uint64 quarter=no_page/4;
-
-            for(uint64 i=0;i<no_page;i++){
-                //if(page_idx+1==best_memory_part_length){for(uint64 i=0;i<width*height;i++) framebuffer[i]=0x00ff0000;break;}
-                /*uint64 t=(uint64)(lambda*(double)i);
-                framebuffer[t]=0x00ff0000;
-                framebuffer[t+width]=0x00ff0000;
-                framebuffer[t+width*2]=0x00ff0000;*/
-
-                if(i<quarter){
-                    framebuffer[(starty-3)*width+startx+(uint64)((double)i*lambdaw)]=0x00ff0000;
-                    framebuffer[(starty-2)*width+startx+(uint64)((double)i*lambdaw)]=0x00ff0000;
-                    framebuffer[(starty-1)*width+startx+(uint64)((double)i*lambdaw)]=0x00ff0000;
-                }else if(i<quarter*2){
-                    framebuffer[(starty+(uint64)((double)(i-quarter)*lambdah))*width+startx+logowidth+2]=0x00ff0000;
-                    framebuffer[(starty+(uint64)((double)(i-quarter)*lambdah))*width+startx+logowidth+1]=0x00ff0000;
-                    framebuffer[(starty+(uint64)((double)(i-quarter)*lambdah))*width+startx+logowidth]=0x00ff0000;
-                }else if(i<quarter*3){
-                    framebuffer[(starty+logoheight+2)*width+startx+(uint64)((double)(quarter-(i-quarter*2))*lambdaw)-2]=0x00ff0000;
-                    framebuffer[(starty+logoheight+1)*width+startx+(uint64)((double)(quarter-(i-quarter*2))*lambdaw)-2]=0x00ff0000;
-                    framebuffer[(starty+logoheight+0)*width+startx+(uint64)((double)(quarter-(i-quarter*2))*lambdaw)-2]=0x00ff0000;
-                }else{
-                    framebuffer[(starty+(uint64)((double)((quarter-(i-quarter*3))*lambdah))-3)*width+startx-2]=0x00ff0000;
-                    framebuffer[(starty+(uint64)((double)((quarter-(i-quarter*3))*lambdah))-3)*width+startx-1]=0x00ff0000;
-                    framebuffer[(starty+(uint64)((double)((quarter-(i-quarter*3))*lambdah))-3)*width+startx]=0x00ff0000;
-                }
-
-                //kernel_pml4[pdpt_index][pd_index][pt_index][i%512]=(i*4096) | flags;
-                ((uint64*)(((uint64)((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]) & PAGE_ADDR_MASK))[i%512] = i*4096 | flags;
-                if((i+1)%512==0){
-                    pt_index++;
-                    if(pt_index!=512){
-                        ((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)alloc_page(1) | flags;
-                    }else{
-                        pd_index++;
-                        pt_index=0;
-                        if(pd_index!=512){
-                            ((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)((uint64)alloc_page(1) | flags);
-                            ((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)alloc_page(1) | flags);
-                        }
-                        else {
-                            pdpt_index++;
-                            pd_index=0;
-                            kernel_pml4[pdpt_index]=(uint64***)((uint64)alloc_page(1) | flags);
-                            ((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)alloc_page(1) | flags;
-                            ((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)alloc_page(1) | flags);
-                        }
-                    }
-                }
-                //framebuffer[i]=0x00ff0000;
-            }
-
-            uint64 framebuffer_start_pageframe=(uint64)framebuffer/4096;
-            uint64 framebuffer_size_page=(width*height*4)/4096+1;
-            pdpt_index=(uint64)framebuffer>>39;
-            pd_index=((uint64)framebuffer>>30) & 0x1ff;
-            pt_index=((uint64)framebuffer>>21) & 0x1ff;
-            //page_idx=((uint64)framebuffer>>12) & 0x1ff;
-            flags=0b111;
-
-            if(kernel_pml4[pdpt_index]==0)kernel_pml4[pdpt_index]=(uint64***)((uint64)alloc_page(1) | flags);
-            if(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]==0)((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)alloc_page(1) | flags;
-            if(((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]==0)((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)alloc_page(1) | flags);
-
-            for(uint64 i=framebuffer_start_pageframe;i<framebuffer_start_pageframe+framebuffer_size_page;i++){
-                ((uint64*)(((uint64)((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]) & PAGE_ADDR_MASK))[i%512] = i*4096 | flags;
-                if((i+1)%512==0){
-                    pt_index++;
-                    if(pt_index!=512){
-                        ((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)alloc_page(1) | flags;
-                    }else{
-                        pd_index++;
-                        pt_index=0;
-                        if(pd_index!=512){
-                            ((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)((uint64)alloc_page(1) | flags);
-                            ((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)alloc_page(1) | flags);
-                        }
-                        else {
-                            pdpt_index++;
-                            pd_index=0;
-                            kernel_pml4[pdpt_index]=(uint64***)((uint64)alloc_page(1) | flags);
-                            ((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)alloc_page(1) | flags;
-                            ((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)alloc_page(1) | flags);
-                        }
-                    }
-                }
-            }
-            
-            //for(uint64 i=0;i<width*height;i++) framebuffer[i]=0x00ff0000;
-
-            /*uint8 t[]="ASD";
-            for(uint32 i=0;i<3;i++){
-                outb(0x3f8, t[i]);
-            }*/
-            //while(1);
-            flags=0b111; //user
-            pdpt_index=KERNEL_START_PDPT;
-            pd_index=KERNEL_START_PD;
-            pt_index=KERNEL_START_PT;
-
-            /*kernel_pml4[pdpt_index]=(uint64***)((uint64)alloc_page(1) | flags);
-            ((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)((uint64)alloc_page(1) | flags);
-            ((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)alloc_page(1) | flags);
-            uint64* pt=(uint64*)((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index];*/
-            if(kernel_pml4[pdpt_index]==0)kernel_pml4[pdpt_index]=(uint64***)((uint64)alloc_page(1) | flags);
-            if(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]==0)((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)alloc_page(1) | flags;
-            if(((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]==0)((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)alloc_page(1) | flags);
-            
-            uint32 kernel_size_page=kernelfilesize/4096+1;
-            void* kernel=alloc_page(kernel_size_page);
-            for(uint32 i=0;i<kernel_size_page*4096;i++){
-                *(uint8*)(kernel+i)=*(uint8*)(kernel_file+i);
-            }
-            i=0;
-            for(i=0;i<kernel_size_page;i++){
-                ((uint64*)(((uint64)((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]) & PAGE_ADDR_MASK))[i%512] = ((uint64)kernel + i*4096) | flags;
-                if((i+1)%512==0){
-                    pt_index++;
-                    if(pt_index!=512){
-                        ((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)alloc_page(1) | flags;
-                    }else{
-                        pd_index++;
-                        pt_index=0;
-                        if(pd_index!=512){
-                            ((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)((uint64)alloc_page(1) | flags);
-                            ((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)alloc_page(1) | flags);
-                        }
-                        else {
-                            pdpt_index++;
-                            pd_index=0;
-                            kernel_pml4[pdpt_index]=(uint64***)((uint64)alloc_page(1) | flags);
-                            ((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)alloc_page(1) | flags;
-                            ((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)alloc_page(1) | flags);
-                        }
-                    }
-                }
-            }
-
-            kernel_info* kernel_info= alloc_page(1);
-            uint64 kernel_info_vma=(pdpt_index<<39) | (pd_index<<30) | (pt_index << 21) | (i << 12);
-
-            ((uint64*)(((uint64)((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]) & PAGE_ADDR_MASK))[i%512] = ((uint64)kernel_info) | flags;
-            if((i+1)%512==0){
-                pt_index++;
-                if(pt_index!=512){
-                    ((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)alloc_page(1) | flags;
-                }else{
-                    pd_index++;
-                    pt_index=0;
-                    if(pd_index!=512){
-                        ((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)((uint64)alloc_page(1) | flags);
-                        ((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)alloc_page(1) | flags);
-                    }
-                    else {
-                        pdpt_index++;
-                        pd_index=0;
-                        kernel_pml4[pdpt_index]=(uint64***)((uint64)alloc_page(1) | flags);
-                        ((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)alloc_page(1) | flags;
-                        ((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)alloc_page(1) | flags);
-                    }
-                }
-            }
-            i++;
-
-            
-
-            void* kernel_stack = alloc_page(25);
-            for(uint32 k=0;k<25;k++){
-                ((uint64*)(((uint64)((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]) & PAGE_ADDR_MASK))[i%512] = ((uint64)kernel_stack + k*4096) | flags;
-                if((i+1)%512==0){
-                    pt_index++;
-                    if(pt_index!=512){
-                        ((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)alloc_page(1) | flags;
-                    }else{
-                        pd_index++;
-                        pt_index=0;
-                        if(pd_index!=512){
-                            ((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)((uint64)alloc_page(1) | flags);
-                            ((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)alloc_page(1) | flags);
-                        }
-                        else {
-                            pdpt_index++;
-                            pd_index=0;
-                            kernel_pml4[pdpt_index]=(uint64***)((uint64)alloc_page(1) | flags);
-                            ((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)alloc_page(1) | flags;
-                            ((uint64*)((uint64)(((uint64*)((uint64)kernel_pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)alloc_page(1) | flags);
-                        }
-                    }
-                }
-                i++;
-            }
-            uint64 kernel_stack_vma=(pdpt_index<<39) | (pd_index<<30) | (pt_index << 21) | (i << 12)-1;
-
-            load_pml4(kernel_pml4);
-
-            kernel_info->frame_buffer=(uint64)framebuffer;
-            kernel_info->kernel_pml4_addresss=(uint64)kernel_pml4;
-            kernel_info->screen_width=(uint64)width;
-            kernel_info->screen_height=(uint64)height;
-            kernel_info->real_address=(uint64)kernel;
-            kernel_info->largest_area_idx=best_mem_part_idx;
-            kernel_info->memmap_desc_size=MemMapDescriptorSize;
-            kernel_info->memmap_desc_count=DescriptorCount;
-            kernel_info->memmap=memmap;
-            kernel_info->used_pages=page_idx;
-            kernel_info->gdt=&gdt_table;
-            kernel_info->tss=&tss;
-            kernel_info->kernel_next_page=i;
-            kernel_info->acpi_rsdp=acpi_rsdp_addr;
-            
-            uint64 kernel_virt_addr=/*offset*/(uint64)0 | (uint64)0<<12/*p_idx*/ | pt_index<<21 | pd_index<<30 | pdpt_index<<39;
-            jmp_to_kernel((void*)kernel_stack_vma, (void*)kernel_virt_addr,(void*)kernel_info_vma);
-        }
-    }
-    while(1);
-return EFI_SUCCESS;
+}
+void print_int_to_serial(uint64 n){
+    char buf[30];
+    for(uint8 i=0;i<30;i++)buf[i]=0;
+    int_to_text(n,buf);
+    print_to_serial(buf);
 }

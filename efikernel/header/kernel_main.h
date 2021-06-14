@@ -2,10 +2,7 @@
 #define __KERNEL_MAIN_H
 #include <types.h>
 #include <gdt.h>
-
-#define KEYBOARD_PORT 0x60
-#define SERIAL_PORT 0x3F8
-#define KERNEL_STACK_SIZE 0x5 /*Pages*/
+#include <config.h>
 
 typedef struct {
     uint32          Type;           // Field size is 32 bits followed by 32 bit pad
@@ -31,8 +28,10 @@ typedef struct{
     TSS* tss;
     uint64 kernel_next_page;
     uint64 acpi_rsdp;
+    uint64 io_space_used_pages;
 } kernel_info;
 
 void kernel_main(kernel_info* kernel_info);
+void kernel_panic(char* error);
 
 #endif

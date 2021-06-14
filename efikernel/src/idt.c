@@ -58,6 +58,9 @@ void handleInterrupt(uint64 interruptnumber){
     //while1();
     //while(1);
     /*outb(SERIAL_PORT,'A');*/
+    /*print_to_serial("Interrupt int");
+    print_int_to_serial(interruptnumber);
+    print_to_serial("\n\r");*/
     #if(IDT_DEBUG_OUTPUT)
         test_idt++;
         print_to_serial("int");

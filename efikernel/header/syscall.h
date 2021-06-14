@@ -31,6 +31,7 @@ extern syscall_args_struct syscall_args;
 extern void syscall_entry(void);
 void syscall_handler();
 void syscall_init();
+void syscall_io_serial();
 /*void (*syscall_io_handlers[])(void);
 void** syscall_handlers[];*/
 
