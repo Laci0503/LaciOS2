@@ -216,6 +216,14 @@ void* map_page_to_kernel(void* address){
 }
 
 void* malloc(uint64 size){
+    
+}
+
+void free(void* address){
+    
+}
+
+/*void* malloc(uint64 size){
     if(last_free_heap_header!=NULL){ // If-ek sorrendjével lehet még optimalizálni (kivenni az &&-t)
         #if(MEMORY_DEBUG)
             print_to_serial("last not null");
@@ -308,4 +316,4 @@ void free(void* address){
         next_end_header->length=new_length;
         header->length=new_length;
     }
-}
+}*/
