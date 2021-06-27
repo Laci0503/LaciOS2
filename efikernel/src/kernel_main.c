@@ -51,13 +51,24 @@ void kernel_main(kernel_info* kernel_info){
     print_hex_to_serial(c);
     print_to_serial("\n\r");
 
+    free(c);
     free(b);
-    b=malloc(15);
+    free(a);
+    
+    a=malloc(15);
+    print_to_serial("a: ");
+    print_hex_to_serial(a);
+    print_to_serial("\n\r");
 
+    b=malloc(15);
     print_to_serial("b: ");
     print_hex_to_serial(b);
     print_to_serial("\n\r");
 
+    c=malloc(15);
+    print_to_serial("c: ");
+    print_hex_to_serial(c);
+    print_to_serial("\n\r");
     /*gdt=kernel_info->gdt;
     tss=kernel_info->tss;
     init_memory_manager(kernel_info);

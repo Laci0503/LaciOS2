@@ -79,20 +79,13 @@ void init_memory_manager(kernel_info* kernel_info){
     kernel_next_page=kernel_info->kernel_next_page;
 
     heap=(void*)((KERNEL_VMA_PDPT << 39) | (KERNEL_HEAP_START_PD << 30));
-    last_free_heap_header=(heap_header*)heap;
-    last_free_heap_header->length=(KERNEL_HEAP_SIZE<<12) - (sizeof(heap_header)*2);
-    last_free_heap_header->front=1;
-    last_free_heap_header->allocated=0;
+    heap_header* header;
+    header=(heap_header*)heap;
+    header->length=(KERNEL_HEAP_SIZE<<12) - (sizeof(heap_header)*2);
+    header->allocated=0;
     
     ((heap_header*)((uint64)heap+KERNEL_HEAP_SIZE-sizeof(heap_header)))->length=(KERNEL_HEAP_SIZE<<12) - (sizeof(heap_header)*2);
-    ((heap_header*)((uint64)heap+KERNEL_HEAP_SIZE-sizeof(heap_header)))->front=0;
     ((heap_header*)((uint64)heap+KERNEL_HEAP_SIZE-sizeof(heap_header)))->allocated=0;
-
-    #if(MEMORY_DEBUG)
-        print_to_serial("last_free_heap_header: ");
-        print_hex_to_serial((uint64)last_free_heap_header);
-        print_to_serial("\n\r");
-    #endif
 }
 
 //TODO: Nincs kezelve ha nem tud annyit lefoglalni
@@ -216,11 +209,70 @@ void* map_page_to_kernel(void* address){
 }
 
 void* malloc(uint64 size){
-    
+    #if(MEMORY_DEBUG)
+        print_to_serial("Malloc issued\n\r");
+    #endif
+    heap_header* pos=heap;
+    while((uint64)END_HEAP_HEADER(pos) < (uint64)heap + KERNEL_HEAP_SIZE_BYTES){
+        #if(MEMORY_DEBUG)
+            print_to_serial("Malloc looking at: ");
+            print_hex_to_serial((uint64)pos);
+            print_to_serial("\n\r");
+        #endif
+        if(pos->allocated==0){
+            if(pos->length > size + 2*sizeof(heap_header)){ // Belefér az új header
+                uint64 oldlength=pos->length;
+                pos->allocated=1;
+                pos->length=size;
+                heap_header* end_header=END_HEAP_HEADER(pos);
+                end_header->length=size;
+                end_header->allocated=1;
+                heap_header* next_header=NEXT_HEAP_HEADER(pos);
+                next_header->allocated=0;
+                next_header->length=oldlength-size-2*sizeof(heap_header);
+                return (void*)((uint64)pos + sizeof(heap_header));
+            }else if(pos->length >= size){ // Elég hosszú, de nem fér bele új header
+                pos->allocated=1;
+                END_HEAP_HEADER(pos)->allocated=0;
+                return (void*)((uint64)pos + sizeof(heap_header));
+            }
+        }
+        pos = NEXT_HEAP_HEADER(pos);//(heap_header*)((uint64)pos + pos->length + 2*sizeof(heap_header));
+    }
+    return NULL;
 }
 
 void free(void* address){
-    
+    #if(MEMORY_DEBUG)
+        print_to_serial("Free issued\n\r");
+    #endif
+    heap_header* header = (heap_header*)((uint64)address - sizeof(heap_header));
+    header->allocated=0;
+    heap_header* end_header = END_HEAP_HEADER(header);
+    end_header->allocated=0;
+    if((uint64)header > (uint64)heap){
+        heap_header* before_end_header=(heap_header*)((uint64)header-sizeof(heap_header));
+        if(before_end_header->allocated==0){ // Össze kell olvastani az előzővel
+            #if(MEMORY_DEBUG)
+                print_to_serial("Free: Merging with prev segment\n\r");
+            #endif
+            heap_header* before_start_header=(heap_header*)((uint64)before_end_header - before_end_header->length - sizeof(heap_header));
+            before_start_header->length += header->length + 2*sizeof(heap_header);
+            header=before_start_header;
+            end_header->length=header->length;
+        }
+    }
+    if((uint64)NEXT_HEAP_HEADER(header) < (uint64)heap + KERNEL_HEAP_SIZE_BYTES){
+        heap_header* next_header = NEXT_HEAP_HEADER(header);
+        if(next_header->allocated==0){ // Össze kell olvasztani a következővel
+            #if(MEMORY_DEBUG)
+                print_to_serial("Free: Merging with next segment\n\r");
+            #endif
+            header->length += next_header->length + 2*sizeof(heap_header);
+            end_header=END_HEAP_HEADER(next_header);
+            end_header->length=header->length;
+        }
+    }
 }
 
 /*void* malloc(uint64 size){

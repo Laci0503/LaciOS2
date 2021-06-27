@@ -4,6 +4,9 @@
 #include <kernel_main.h>
 #include <config.h>
 #define EfiConventionalMemory 7
+#define KERNEL_HEAP_SIZE_BYTES (KERNEL_HEAP_SIZE << 12)
+#define END_HEAP_HEADER(header) ((heap_header*)((uint64)header+header->length+sizeof(heap_header))) // Gets the end header from the start header.
+#define NEXT_HEAP_HEADER(header) ((heap_header*)((uint64)header+header->length+2*sizeof(heap_header))) // Gets the next start header from a start header.
 
 uint64* bitmap; //0: Free, 1: Resv
 uint64 bitmap_length;
@@ -92,13 +95,12 @@ volatile typedef struct page_map_level_4{
 
 volatile typedef struct heap_header{
     uint64 allocated:1;
-    uint64 front:1;
-    uint64 length:62;
+    uint64 length:63;
 } heap_header;
 
 page_map_level_4* kernel_pml4;
 
 void* heap; //vma of the kernel heap
-heap_header* last_free_heap_header; // Pointer to the last heap header used by malloc
+//heap_header* last_free_heap_header; // Pointer to the last heap header used by malloc
 
 #endif

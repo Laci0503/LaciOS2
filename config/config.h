@@ -15,7 +15,7 @@
 #define KERNEL_HEAP_START_PD            384ULL  // Start PD of the kernel heap.
 #define KERNEL_STACK_SIZE               1024    // Kernel stack size in pages. Max: 33,554,432 page (128 GiB) 1 page = 4096 bytes
 #define KERNEL_SECONDARY_STACK_SIZE     1024    // Secondary kernel stack (Used for interrupt and syscall handlers) size in pages. Max: 16,777,216 page (64 GiB) 1 page = 4096 bytes
-#define KERNEL_HEAP_SIZE                25600   // Kernel heap size in pages. Max: 33,554,432 page (128 GiB) 1 page = 4096 bytes
+#define KERNEL_HEAP_SIZE                25600ULL// Kernel heap size in pages. Max: 33,554,432 page (128 GiB) 1 page = 4096 bytes
 #define PAGE_ADDR_MASK 0x000ffffffffff000       // Address mask for 4096 byte (1 page) alignment
 
 #define MEMORY_IO_PDPT                  5ULL    // The pdpt reserved for the memory mapped I/O devices
