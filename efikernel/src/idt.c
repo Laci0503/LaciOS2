@@ -5,12 +5,20 @@
 #include <kernel_main.h>
 #include <task_scheduler.h>
 
+#if (IDT_DEBUG)
+    uint64 test_idt;
+#endif
+
 void init_idt(){
     uint32 inthandler_size=(uint64)interrupts_int1-(uint64)interrupts_int0;
     uint64 first_int_handler_addr=(uint64)interrupts_int0;
-    print_to_serial("Inthandlers: ");
-    print_hex_to_serial(first_int_handler_addr);
-    print_to_serial("\r\n");
+    #if(IDT_DEBUG)
+        print_to_serial("Inthandlers: ");
+        print_hex_to_serial(first_int_handler_addr);
+        print_to_serial("\r\nIDT: ");
+        print_hex_to_serial((uint64)IDT);
+        print_to_serial("\n\r");
+    #endif
 
     for(uint32 i=0;i<256;i++){
         uint64 handler_addr=first_int_handler_addr+inthandler_size*i;
@@ -29,11 +37,16 @@ void init_idt(){
     for(uint32 i=0;i<32;i++)IDT[i].type_attr |= 0x1;
     IDT[0x2].type_attr &= 0xfe;
 
+    #if(IDT_DEBUG)
+        print_to_serial("Done constructing the IDT.\n\r");
+    #endif
+
+    idt_descriptor IDT_DESC;
     IDT_DESC.base=(uint64)IDT;
     IDT_DESC.limit=256*sizeof(idt_entry)-1;
     asm("cli");
     asm volatile("lidt %0" : : "m" (IDT_DESC));
-    asm("sti");
+
     outb(PICMasterCommand,0x11);
     outb(PICSlaveCommand,0x11);
 
@@ -48,45 +61,41 @@ void init_idt(){
 
     outb(PICMasterData,0x0);
     outb(PICSlaveData,0x0);
-    #if(IDT_DEBUG_OUTPUT)
-        test_idt=0;
-    #endif
     task_scheduler_running=0;
+
+    asm("sti");
+
+    #if(IDT_DEBUG)
+        test_idt=0;
+        print_to_serial("IDT setup complete. \n\r");
+    #endif
 }
 
 void handleInterrupt(uint64 interruptnumber){
-    //while1();
-    //while(1);
-    /*outb(SERIAL_PORT,'A');*/
-    /*print_to_serial("Interrupt int");
-    print_int_to_serial(interruptnumber);
-    print_to_serial("\n\r");*/
-    #if(IDT_DEBUG_OUTPUT)
-        test_idt++;
-        print_to_serial("int");
-        print_int_to_serial(69420);
-        print_to_serial(" ;#");
+    #if(IDT_DEBUG)
+        print_to_serial("int;#");
         print_int_to_serial(test_idt);
         print_to_serial("\n\r");
+        test_idt++;
     #endif
 
     uint64 current_pml4;
     if(interruptnumber==HardwareInterruptOffset+0){
         if(task_scheduler_running){
-            //asm("mov %%rax, %%cr3" : : "a"(kernel_pml4));
+            /*//asm("mov %%rax, %%cr3" : : "a"(kernel_pml4));
             load_pml4(kernel_pml4);
             schedule(&current_pml4);
-            #if(IDT_DEBUG_OUTPUT)
+            #if(IDT_DEBUG)
                 print_to_serial("Setting pml4:");
                 print_hex_to_serial(current_pml4);
             #endif
             //asm("mov %%rax, %%cr3" : : "a"(current_pml4));
             load_pml4((page_map_level_4*)current_pml4);
-            #if(IDT_DEBUG_OUTPUT)
+            #if(IDT_DEBUG)
                 print_to_serial(" Set!;#");
                 print_int_to_serial(test_idt);
                 print_to_serial("\n\r");
-            #endif
+            #endif*/
         }
     }
     //print_to_serial("Interrupt number: ");
@@ -119,7 +128,7 @@ void handleInterrupt(uint64 interruptnumber){
             print_to_serial(" ");
         }
         print_to_serial("\n\r!!!");
-        #if(IDT_DEBUG_OUTPUT)
+        #if(IDT_DEBUG)
             print_to_serial(";#");
             print_int_to_serial(test_idt);
             print_to_serial("\n\r");
@@ -134,7 +143,7 @@ void handleInterrupt(uint64 interruptnumber){
         outb(PICMasterCommand,0x20);
         if(interruptnumber>=HardwareInterruptOffset+8)outb(PICSlaveCommand,0x20);
     }
-    #if(IDT_DEBUG_OUTPUT)
+    #if(IDT_DEBUG)
         print_to_serial("returning");
         print_hex_to_serial(current_pml4);
         print_to_serial("\n\r");

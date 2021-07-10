@@ -15,6 +15,8 @@ SECTIONS
         _data = .;
         *(.data)
         *(.rodata*)
+        *(.bss)
+        *(COMMON)
         . = ALIGN(4096);
    }
 
@@ -23,14 +25,6 @@ SECTIONS
        _ehframe = .;
        *(.eh_frame)
         . = ALIGN(4096);
-   }
-
-   .bss : AT(ADDR(.bss) - 0x20000000000)
-   {
-       _bss = .;
-       *(.bss)
-        *(COMMON)
-       . = ALIGN(4096);
    }
 
    _end = .;

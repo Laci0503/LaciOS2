@@ -7,7 +7,7 @@
 void init_task_scheduler(){
     task_switch_timer=0;
     for(uint32 i=0;i<sizeof(tasks_active);i++)((uint8*)tasks_active)[i]=0;
-    tasks=(task*)malloc_page((sizeof(task)*MAX_TASK_NUM)/4096+1);
+    tasks=(task*)malloc(sizeof(task)*MAX_TASK_NUM);
     task_count=0;
     task_switch_timer=1;
     cycle_per_task=5;

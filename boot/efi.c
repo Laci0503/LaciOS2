@@ -32,7 +32,8 @@ typedef volatile struct rgb{
 } rgb;
 typedef struct{
     uint64 real_address;
-    uint64 frame_buffer;
+    uint64 framebuffer;
+    uint64 physical_framebuffer;
     uint64 screen_width;
     uint64 screen_height;
     uint64 kernel_pml4_addresss;
@@ -43,7 +44,6 @@ typedef struct{
     uint64 used_pages;
     void* gdt;
     void* tss;
-    uint64 kernel_next_page;
     uint64 acpi_rsdp;
     uint64 io_space_used_pages;
 } kernel_info;
@@ -240,12 +240,17 @@ EFI_STATUS EFIAPI efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTabl
     }
 
     // Creating the page table
+
+    // Exiting boot services
+    uefi_call_wrapper(BS->ExitBootServices,2,ImageHandle,mem_map_key);
+    asm("cli");
+
     // Identity mapping the memory
     uint64 pdpt_index=0;
     uint64 pd_index=0;
     uint64 pt_index=0;
     uint64 page_index=0;
-    uint64 flags=0b011; // bit0: present, bit1: read/write, bit2: clear: supervisor only
+    uint64 flags=KERNEL_PAGEMAP_FLAGS;
     uint64 page_count = ram_amount >> 12;
 
     pml4=alloc_page(1);
@@ -263,7 +268,7 @@ EFI_STATUS EFIAPI efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTabl
     pd_index=KERNEL_BINARY_PD;
     pt_index=0;
     page_index=0;
-    flags=0b011; // bit0: present, bit1: read/write, bit2: clear: supervisor only
+    flags=KERNEL_PAGEMAP_FLAGS; // bit0: present, bit1: read/write, bit2: clear: supervisor only
 
     // Copying the kernel binary to an allocated space at a page boundary
     uint32 kernel_binary_size_page = (kernel_binary_size >> 12) + 1;
@@ -330,22 +335,29 @@ EFI_STATUS EFIAPI efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTabl
 
     //Framebuffer
 
+    flags=IO_PAGEMAP_FLAGS;
     pdpt_index=MEMORY_IO_PDPT;
     pd_index=(io_space_used_pages>>18) & 511;
     pt_index=(io_space_used_pages>>9) & 511;
     page_index=io_space_used_pages & 511;
-    void* framebuffer_vma = (void*)((MEMORY_IO_PDPT << 39) + io_space_used_pages);
+    void* framebuffer_vma = (void*)((MEMORY_IO_PDPT << 39) + (io_space_used_pages << 12) + ((uint64)framebuffer & 4095));
     uint64 framebuffer_size_page=framebuffer_size >> 12;
     uint64 framebuffer_start_pageframe=(uint64)framebuffer >> 12;
     io_space_used_pages+=framebuffer_size_page;
+    #if(EFI_DEBUG)
+        print_to_serial("Framebuffer start pageframe: ");
+        print_hex_to_serial(framebuffer_start_pageframe);
+        print_to_serial("\n\r");
+    #endif
     for(uint64 i=0;i<framebuffer_size_page;i++){
         map_page(pdpt_index,pd_index,pt_index,page_index,framebuffer_start_pageframe + i,pml4,flags);
+        #if(EFI_DEBUG)
+            print_to_serial("Framebuffer mapping: i+framebuffer_start_pageframe= ");
+            print_hex_to_serial(framebuffer_start_pageframe + i);
+            print_to_serial("\n\r");
+        #endif
         inc_pmap_vars(&pdpt_index,&pd_index,&pt_index,&page_index,pml4,flags);
     }
-
-    // Exiting boot services
-    uefi_call_wrapper(BS->ExitBootServices,2,ImageHandle,mem_map_key);
-    asm("cli");
 
     // Creating and loading the gdt
     for(uint32 i=0;i<sizeof(tss);i++){
@@ -373,7 +385,8 @@ EFI_STATUS EFIAPI efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTabl
     void* kernel_stack_top_vma=(void*)((KERNEL_VMA_PDPT << 39) | (KERNEL_STACK_START_PD << 30)) + (KERNEL_STACK_SIZE << 12)-8;
     void* kernel_vma=(void*)((KERNEL_VMA_PDPT << 39) | (KERNEL_BINARY_PD << 30));
 
-    kernel_info_vma->frame_buffer=(uint64)framebuffer_vma;
+    kernel_info_vma->framebuffer=(uint64)framebuffer_vma;
+    kernel_info_vma->physical_framebuffer=(uint64)framebuffer;
     kernel_info_vma->kernel_pml4_addresss=(uint64)pml4;
     kernel_info_vma->screen_width=(uint64)width;
     kernel_info_vma->screen_height=(uint64)height;
@@ -488,12 +501,12 @@ void inc_pmap_vars(uint64* pdpt, uint64* pd, uint64* pt, uint64* page, uint64***
     (*page)++;
     if(*page==512){
         #if(EFI_DEBUG)
-            Print(L"Pagemap: pdpt: %u, pd: %u, pt: %u, page: %u\n\r",
+            /*Print(L"Pagemap: pdpt: %u, pd: %u, pt: %u, page: %u\n\r",
                 *pdpt,
                 *pd,
                 *pt,
                 *page
-            );
+            );*/
         #endif
         (*page)=0;
         (*pt)++;

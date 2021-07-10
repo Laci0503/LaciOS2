@@ -7,6 +7,7 @@ FILES="
     syscall \
     acpi \
     device_manager \
+    collections \
     kernel_main \
 "
 GCCFLAGS="

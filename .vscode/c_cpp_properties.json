@@ -3,8 +3,8 @@
         {
             "name": "Linux",
             "includePath": [
-                "/mnt/d/gnu-efi/gnu-efi/inc",
-                "/mnt/d/gnu-efi/gnu-efi/inc/x86_64",
+                "${workspaceFolder}/../gnu-efi/gnu-efi/inc",
+                "${workspaceFolder}/../gnu-efi/gnu-efi/inc/x86_64",
                 "${workspaceFolder}/efikernel/header",
                 "${workspaceFolder}/config"
             ],

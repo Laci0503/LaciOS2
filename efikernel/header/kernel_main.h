@@ -15,7 +15,8 @@ typedef struct {
 
 typedef struct{
     uint64 real_address;
-    uint64 frame_buffer;
+    uint64 framebuffer;
+    uint64 physical_framebuffer;
     uint64 screen_width;
     uint64 screen_height;
     uint64 kernel_pml4_addresss;
@@ -26,7 +27,6 @@ typedef struct{
     uint64 used_pages;
     GDT* gdt;
     TSS* tss;
-    uint64 kernel_next_page;
     uint64 acpi_rsdp;
     uint64 io_space_used_pages;
 } kernel_info;

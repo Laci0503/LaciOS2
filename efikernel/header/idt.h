@@ -3,7 +3,7 @@
 #include <types.h>
 #include <config.h>
 
-typedef struct{
+typedef struct idt_entry{
     uint16 offset_1;
     uint16 selector;
     uint8 interrupt_stack_table_selector;
@@ -13,14 +13,12 @@ typedef struct{
     uint32 resv;
 } __attribute__((packed)) idt_entry;
 
-idt_entry IDT[256];
+__attribute__((aligned(4096))) idt_entry IDT[256];
 
-typedef struct{
+typedef struct idt_descriptor{
     uint16 limit;
     uint64 base;
 } __attribute__((packed)) idt_descriptor;
-
-idt_descriptor IDT_DESC;
 
 
 //interrupt_stack_table_selector:
@@ -37,7 +35,7 @@ idt_descriptor IDT_DESC;
 
 void init_idt();
 
-typedef struct{
+typedef struct CPU_state{
     uint64 rax;
     uint64 rbx;
     uint64 rcx;

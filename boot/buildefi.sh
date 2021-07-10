@@ -1,5 +1,5 @@
 echo "Compiling efi part"
-GNU_EFI_DIR="/mnt/d/gnu-efi/gnu-efi"
+GNU_EFI_DIR="../gnu-efi/gnu-efi"
 
 gcc boot/efi.c                         \
     -c                                 \

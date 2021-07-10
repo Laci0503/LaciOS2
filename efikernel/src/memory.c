@@ -5,6 +5,8 @@
 #include <assembly_functions.h>
 
 void init_memory_manager(kernel_info* kernel_info){
+    gdt=kernel_info->gdt;
+    tss=kernel_info->tss;
     EFI_MEMORY_DESCRIPTOR* memmap=kernel_info->memmap;
     uint64 memmap_desc_count=kernel_info->memmap_desc_count;
     uint64 memmap_desc_size=kernel_info->memmap_desc_size;
@@ -65,9 +67,9 @@ void init_memory_manager(kernel_info* kernel_info){
         bitmap[(i)/64] |= (0x1ULL << (i%64));
     }
     uint64 kernel_pml4_addr=kernel_info->kernel_pml4_addresss;
-    bitmap[kernel_pml4_addr/64] |= (1ULL<<(kernel_pml4_addr%64));
-    bitmap[((uint64)(kernel_info->gdt))/64] |= (1ULL<<(((uint64)(kernel_info->gdt))%64));
-    bitmap[((uint64)(kernel_info->tss))/64] |= (1ULL<<(((uint64)(kernel_info->tss))%64));
+    bitmap[kernel_pml4_addr/64] |= (1ULL<<(kernel_pml4_addr%64)); // Mark the kernel pml4 as reserved
+    bitmap[((uint64)(kernel_info->gdt))/64] |= (1ULL<<(((uint64)(kernel_info->gdt))%64)); // Mark the gdt as reserved
+    bitmap[((uint64)(kernel_info->tss))/64] |= (1ULL<<(((uint64)(kernel_info->tss))%64)); // Mark the tss as reserved
     first_avail_idx=0;
     first_avail_length=1;
     //while(bitmap[(first_avail_idx)/64] & (0x1 << first_avail_idx%64) != 0)first_avail_idx++;
@@ -76,7 +78,6 @@ void init_memory_manager(kernel_info* kernel_info){
     kernel_pml4=(page_map_level_4*)kernel_pml4_addr;
 
     kernel_start_page=((uint64)kernel_main)>>12;
-    kernel_next_page=kernel_info->kernel_next_page;
 
     heap=(void*)((KERNEL_VMA_PDPT << 39) | (KERNEL_HEAP_START_PD << 30));
     heap_header* header;
@@ -86,6 +87,41 @@ void init_memory_manager(kernel_info* kernel_info){
     
     ((heap_header*)((uint64)heap+KERNEL_HEAP_SIZE-sizeof(heap_header)))->length=(KERNEL_HEAP_SIZE<<12) - (sizeof(heap_header)*2);
     ((heap_header*)((uint64)heap+KERNEL_HEAP_SIZE-sizeof(heap_header)))->allocated=0;
+
+    #if(MEMORY_DEBUG)
+        print_to_serial("\n\rRam amount: \n\r");
+        print_int_to_serial(ram_amount/(1024*1024));
+        print_to_serial(" MB\n\r");
+        print_to_serial("Usable page count: ");
+        print_int_to_serial(usable_page_count);
+        print_to_serial("; ");
+        print_float_to_serial(((float80)usable_page_count*4096)/(1024*1024));
+        print_to_serial(" MB\n\rBitmap address: ");
+        print_hex_to_serial((uint64)bitmap);
+        print_to_serial("\n\r");
+        print_to_serial("First_avail_idx: ");
+        print_hex_to_serial(first_avail_idx);
+        print_to_serial("\n\r");
+        print_to_serial("First_avail_length: ");
+        print_hex_to_serial(first_avail_length);
+        print_to_serial("\n\r");
+        print_to_serial("Kernel entry point virtual address: ");
+        print_hex_to_serial((uint64)&kernel_main);
+        print_to_serial("\n\r");
+        print_to_serial("Tss (Kernel): ");
+        print_hex_to_serial((uint64)tss);
+        print_to_serial("\n\r");
+        print_to_serial("Tss->rsp0: ");
+        print_hex_to_serial(tss->rsp0);
+        print_to_serial("\n\r");
+        print_to_serial("Kernel pml4: ");
+        print_hex_to_serial((uint64)kernel_pml4);
+        print_to_serial("\n\r");
+    #endif
+
+    io_next_page=kernel_info->io_space_used_pages;
+
+    map_system_tables();
 }
 
 //TODO: Nincs kezelve ha nem tud annyit lefoglalni
@@ -159,53 +195,45 @@ void map_system_tables(){
     gdt->tss_high.limit15_0 = (mapped_tss_addr >> 32) & 0xffff;
     gdt->tss_high.base15_0 = (mapped_tss_addr >> 48) & 0xffff;
 
+    tss->rsp0 = SECONDARY_STACK_TOP;
+    tss->rsp1 = SECONDARY_STACK_TOP;
+    tss->rsp2 = SECONDARY_STACK_TOP;
+
     gdt_ptr ptr;
     ptr.base=mapped_gdt_addr;
     ptr.limit=sizeof(*gdt)-1;
-    print_to_serial("TSS address: ");
-    print_hex_to_serial(mapped_tss_addr);
-    print_to_serial("\n\r");
-    print_to_serial("GDT address: ");
-    print_hex_to_serial(mapped_gdt_addr);
-    print_to_serial("\n\r");
-    print_to_serial("&ptr: ");
-    print_hex_to_serial((uint64)&ptr);
-    print_to_serial("\n\r");
-    //while1();
+    #if (MEMORY_DEBUG)
+        print_to_serial("TSS address: ");
+        print_hex_to_serial(mapped_tss_addr);
+        print_to_serial("\n\r");
+        print_to_serial("GDT address: ");
+        print_hex_to_serial(mapped_gdt_addr);
+        print_to_serial("\n\r");
+        print_to_serial("&ptr: ");
+        print_hex_to_serial((uint64)&ptr);
+        print_to_serial("\n\r");
+    #endif
     load_gdt(&ptr);
+
+    gdt=mapped_gdt_addr;
+    tss=mapped_tss_addr;
+
+    print_to_serial("Mapped gdt address: ");
+    print_hex_to_serial((uint64)gdt);
+    print_to_serial("\n\rMapped tss address: ");
+    print_hex_to_serial((uint64)tss);
+    print_to_serial("\n\r");
 }
 
 void* map_page_to_kernel(void* address){
-    uint64 kernel_addr=(kernel_start_page+kernel_next_page)<<12;
-    uint64 pdpt_index=kernel_addr >> 39;
-    uint64 pd_index=(kernel_addr >> 30) & 511;
-    uint64 pt_index=(kernel_addr >> 21) & 511;
-    uint64 j=(kernel_addr >> 12) & 511;
-    uint64**** pml4=(uint64****)(kernel_pml4);
-    uint64 flags=0b111;
-    ((uint64*)(((uint64)((uint64*)((uint64)(((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]) & PAGE_ADDR_MASK))[j%512] = ((uint64)address & (~0xfff)) | flags;
-    if((j+1)%512==0){
-        pt_index++;
-        if(pt_index!=512){
-            ((uint64*)((uint64)(((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)malloc_page(1) | flags;
-        }else{
-            pd_index++;
-            pt_index=0;
-            if(pd_index!=512){
-                ((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)((uint64)malloc_page(1) | flags);
-                ((uint64*)((uint64)(((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)malloc_page(1) | flags);
-            }
-            else {
-                pdpt_index++;
-                pd_index=0;
-                pml4[pdpt_index]=(uint64***)((uint64)malloc_page(1) | flags);
-                ((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index]=(uint64)malloc_page(1) | flags;
-                ((uint64*)((uint64)(((uint64*)((uint64)pml4[pdpt_index] & PAGE_ADDR_MASK))[pd_index])& PAGE_ADDR_MASK)) [pt_index]=(uint64)((uint64)malloc_page(1) | flags);
-            }
-        }
-    }
-    kernel_next_page++;
-    return (void*)kernel_addr;
+    uint64 pdpt=MEMORY_IO_PDPT;
+    uint64 pd=(io_next_page>>18) & 511;
+    uint64 pt=(io_next_page>>9) & 511;
+    uint64 p = io_next_page & 511;
+    map_page(pdpt,pd,pt,p,(uint64)address>>12,kernel_pml4,KERNEL_PAGEMAP_FLAGS);
+    void* return_addr = (void*)((io_next_page<<12) | (pdpt << 39));
+    io_next_page++;
+    return return_addr;
 }
 
 void* malloc(uint64 size){
@@ -271,6 +299,56 @@ void free(void* address){
             header->length += next_header->length + 2*sizeof(heap_header);
             end_header=END_HEAP_HEADER(next_header);
             end_header->length=header->length;
+        }
+    }
+}
+
+void map_page(uint64 pdpt, uint64 pd, uint64 pt, uint64 page, uint64 phys_page, uint64**** pml4, uint64 flags){
+    uint64* pdpt_pointer=(uint64*)((uint64)(pml4[pdpt]) & PAGE_ADDR_MASK);
+    if(pdpt_pointer==NULL){
+        pdpt_pointer=malloc_page(1);
+        pml4[pdpt]=(uint64***)((uint64)pdpt_pointer | flags);
+        #if(MEMORY_DEBUG)
+            print_to_serial("Allocated a page for a pdpt at :");
+            print_hex_to_serial((uint64)pdpt_pointer);
+            print_to_serial("\n\r");
+        #endif
+    }
+    uint64* pd_pointer=(uint64*)((uint64)(pdpt_pointer[pd]) & PAGE_ADDR_MASK);
+    if(pd_pointer==NULL){
+        pd_pointer=malloc_page(1);
+        pdpt_pointer[pd]=(uint64)pd_pointer | flags;
+        #if(MEMORY_DEBUG)
+            print_to_serial("Allocated a page for a pd at :");
+            print_hex_to_serial((uint64)pd_pointer);
+            print_to_serial("\n\r");
+        #endif
+    }
+    uint64* pt_pointer=(uint64*)((uint64)(pd_pointer[pt]) & PAGE_ADDR_MASK);
+    if(pt_pointer==NULL){
+        pt_pointer=malloc_page(1);
+        pd_pointer[pt]=(uint64)pt_pointer | flags;
+        #if(MEMORY_DEBUG)
+            print_to_serial("Allocated a page for a pt at :");
+            print_hex_to_serial((uint64)pt_pointer);
+            print_to_serial("\n\r");
+        #endif
+    }
+    pt_pointer[page]=(phys_page << 12) | flags;
+}
+
+void inc_pmap_vars(uint64* pdpt, uint64* pd, uint64* pt, uint64* page, uint64**** pml4){
+    (*page)++;
+    if(*page==512){
+        (*page)=0;
+        (*pt)++;
+        if(*pt==512){
+            (*pt)=0;
+            (*pd)++;
+            if(*pd==512){
+                (*pd)=0;
+                (*pdpt)++;
+            }
         }
     }
 }

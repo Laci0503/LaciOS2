@@ -16,15 +16,18 @@
 #define KERNEL_STACK_SIZE               1024    // Kernel stack size in pages. Max: 33,554,432 page (128 GiB) 1 page = 4096 bytes
 #define KERNEL_SECONDARY_STACK_SIZE     1024    // Secondary kernel stack (Used for interrupt and syscall handlers) size in pages. Max: 16,777,216 page (64 GiB) 1 page = 4096 bytes
 #define KERNEL_HEAP_SIZE                25600ULL// Kernel heap size in pages. Max: 33,554,432 page (128 GiB) 1 page = 4096 bytes
-#define PAGE_ADDR_MASK 0x000ffffffffff000       // Address mask for 4096 byte (1 page) alignment
+#define PAGE_ADDR_MASK 0x000ffffffffff000       // Address mask for 4096 byte (1 page) alignment.
+#define KERNEL_PAGEMAP_FLAGS            0b011   // The flags used for creating the kernel pml4. bit0: present, bit1: read/write, bit2: clear: supervisor only
+#define IO_PAGEMAP_FLAGS                0b10011 // The flags used for creating the IO VMA space. bit0: present, bit1: read/write, bit2: supervisor only, bit3: caching mode (clear: write-back), bit4: caching disabled
 
 #define MEMORY_IO_PDPT                  5ULL    // The pdpt reserved for the memory mapped I/O devices
 
 //Debug
 #define ACPI_DEBUG 0                            // Debug output at ACPI parsing
-#define IDT_DEBUG_OUTPUT 0                      // Debug output on interrupts
+#define IDT_DEBUG 0                             // Debug output on interrupts
 #define EFI_DEBUG 0                             // Debug output at booting
-#define MEMORY_DEBUG 1                          // Debug output when handling memory
+#define MEMORY_DEBUG 0                          // Debug output when handling memory
+#define SCREEN_DEBUG 0                          // Debug output about screen information
 
 //General ports
 #define KEYBOARD_PORT 0x60                      // I/O Port of the PS2 keyboard
